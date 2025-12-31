@@ -17,7 +17,7 @@ line_set = [0, 3, 6, 9, 12, 15]
 # line_set = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
 
 line_set.each do |line|
-	print Paint['  445 [seth@TestBook]', :black, rainbow(line, speed)]
+	print Paint['  445 [jostevens@TestBook]', :black, rainbow(line, speed)]
 	color_set = []
 	(0...steps).each do |step|
 		real_step = step

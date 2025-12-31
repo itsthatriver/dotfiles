@@ -33,8 +33,8 @@ fi
 for config_file ($ZSH/**/*.zsh~*/backups/*) source $config_file
 
 # initialize autocomplete here, otherwise functions won't be loaded
-# On slow systems, checking the cached .zcompdump file to see if it must be 
-# regenerated adds a noticable delay to zsh startup.  This little hack restricts 
+# On slow systems, checking the cached .zcompdump file to see if it must be
+# regenerated adds a noticable delay to zsh startup.  This little hack restricts
 # it to once a day.  It should be pasted into your own completion file.
 #
 # The globbing is a little complicated here:
@@ -42,7 +42,7 @@ for config_file ($ZSH/**/*.zsh~*/backups/*) source $config_file
 # - 'N' makes the glob pattern evaluate to nothing when it doesn't match (rather than throw a globbing error)
 # - '.' matches "regular files"
 # - 'mh+24' matches files (or directories or whatever) that are older than 24 hours.
-autoload -Uz compinit 
+autoload -Uz compinit
 if [[ -n ${ZDOTDIR}/.zcompdump(#qN.mh+24) ]]; then
   compinit;
 else
@@ -80,14 +80,3 @@ fi
 # -------------------------------------------------------------------------------------------------=
 
 eval "$(brew shellenv)"
-
-# bun completions
-[ -s "/Users/seth/.bun/_bun" ] && source "/Users/seth/.bun/_bun"
-
-# bun
-export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
-
-# bun
-export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"

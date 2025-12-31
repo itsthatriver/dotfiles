@@ -48,14 +48,14 @@ IRB.conf[:AUTO_INDENT]  = true
 
 # Custom Prompt
 IRB.conf[:PROMPT] ||= {}
-IRB.conf[:PROMPT][:SETH] = {
+IRB.conf[:PROMPT][:JO] = {
 	:PROMPT_I => "[%03n] > ",
 	:PROMPT_S => "[%03n] * ",
 	:PROMPT_C => "[%03n] ? ",
 	:PROMPT_N => "[%03n] > ",
 	:RETURN   => "=> %s\n"
 }
-IRB.conf[:PROMPT_MODE]  = :SETH
+IRB.conf[:PROMPT_MODE]  = :JO
 
 # Rails only
 load "~/.railsrc" if ENV['RAILS_ENV'] || defined? Rails
