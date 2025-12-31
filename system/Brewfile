@@ -1,44 +1,24 @@
 work_machine = File.exist?(File.expand_path("~/.workmachine"))
 
 tap "buo/cask-upgrade"
-tap "dteoh/sqa"
 
-mas "WiFi Signal",   id: 525912054
-mas "Looking Glass", id: 1602004436
+mas "Magnet", id: 441258766
 
 cask "1password"
-cask "adobe-creative-cloud"
-cask "alfred"
-# cask "arc"
-cask "bettertouchtool"
 cask "istat-menus"
-cask "jordanbaird-ice"
 cask "karabiner-elements"
-cask "notion"
-cask "osquery"
-cask "rectangle"
-cask "the-unarchiver"
-cask "unicodechecker"
-cask "zen"
 
 unless work_machine
-  cask "backblaze"
-  cask "ubersicht"
+  cask "example_install"
 end
 
 brew "ack"
 brew "coreutils"
-brew "ctags"
 brew "gnu-sed"
-brew "graphviz"
-brew "htop"
-brew "iftop"
 brew "jq"
+brew "kubectl"
+brew "yq"
 brew "mas"
-brew "procs"
 brew "rg"
-brew "switchaudio-osx"
-brew "tree"
+brew "erdtree"
 brew "wget"
-brew "yt-dlp"
-brew "zenith"

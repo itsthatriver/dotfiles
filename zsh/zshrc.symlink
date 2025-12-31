@@ -83,3 +83,11 @@ eval "$(brew shellenv)"
 
 # bun completions
 [ -s "/Users/seth/.bun/_bun" ] && source "/Users/seth/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"

@@ -110,19 +110,6 @@ defaults write com.apple.dock expose-animation-duration -float 0.01
 # Dim hidden apps in the Dock
 defaults write com.apple.dock showhidden -bool true
 
-# Hide Safari's bookmark bar.
-defaults write com.apple.Safari ShowFavoritesBar -bool false
-
-# Set up Safari for development.
-defaults write com.apple.Safari IncludeInternalDebugMenu -bool true
-defaults write com.apple.Safari IncludeDevelopMenu -bool true
-defaults write com.apple.Safari WebKitDeveloperExtrasEnabledPreferenceKey -bool true
-defaults write com.apple.Safari "com.apple.Safari.ContentPageGroupIdentifier.WebKit2DeveloperExtrasEnabled" -bool true
-defaults write NSGlobalDomain WebKitDeveloperExtras -bool true
-
-# Make Safari’s search banners default to Contains instead of Starts With
-defaults write com.apple.Safari FindOnPageMatchesWordStartsOnly -bool false
-
 # Add a context menu item for showing the Web Inspector in web views
 defaults write NSGlobalDomain WebKitDeveloperExtras -bool true
 
@@ -140,24 +127,23 @@ defaults write NSGlobalDomain WebKitDeveloperExtras -bool true
 # 12: Notification Center
 
 # Top right screen corner → Put display to sleep
-defaults write com.apple.dock wvous-tr-corner -int 10
-defaults write com.apple.dock wvous-tr-modifier -int 0
+# defaults write com.apple.dock wvous-tr-corner -int 10
+# defaults write com.apple.dock wvous-tr-modifier -int 0
 
 # Set the Finder prefs for showing a few different volumes on the Desktop.
 defaults write com.apple.finder ShowExternalHardDrivesOnDesktop -bool true
 defaults write com.apple.finder ShowRemovableMediaOnDesktop -bool true
 
 # Use scroll gesture with modifier keys to zoom
-defaults write com.apple.universalaccess closeViewScrollWheelToggle -int 1
-defaults write com.apple.AppleMultitouchTrackpad HIDScrollZoomModifierMask -int 262144
-defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad HIDScrollZoomModifierMask -int 262144
+# defaults write com.apple.universalaccess closeViewScrollWheelToggle -int 1
+# defaults write com.apple.AppleMultitouchTrackpad HIDScrollZoomModifierMask -int 262144
+# defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad HIDScrollZoomModifierMask -int 262144
 
 # Kill affected applications
 affected_apps=(
   "Dock"
   "Finder"
   "Mail"
-  "Safari"
   "SystemUIServer"
   "TextEdit"
 )
