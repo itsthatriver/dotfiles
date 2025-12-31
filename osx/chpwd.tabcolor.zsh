@@ -30,7 +30,7 @@ update_tab_chpwd() {
 
 # Register the function so it is called whenever the working
 # directory changes.
-autoload zsh/add-zsh-hook
+autoload -Uz add-zsh-hook
 add-zsh-hook chpwd update_tab_chpwd
 # chpwd_functions=( ${chpwd_functions} update_tab_chpwd )
 
