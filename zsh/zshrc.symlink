@@ -29,7 +29,7 @@ if [ -f ${HOMEBREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]; 
   source ${HOMEBREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 fi
 
-# source every .zsh file in this repo
+# Source every .zsh file in this repo
 for config_file ($ZSH/**/*.zsh~*/backups/*) source $config_file
 
 # initialize autocomplete here, otherwise functions won't be loaded
@@ -80,3 +80,5 @@ fi
 # -------------------------------------------------------------------------------------------------=
 
 eval "$(brew shellenv)"
+
+. "$HOME/.local/bin/env"
