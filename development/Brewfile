@@ -11,7 +11,7 @@ cask "font-hack-nerd-font"
 cask "imageoptim"
 cask "iterm2"
 cask "qmk-toolbox"
-cask "visual-studio-code"
+cask "cursor"
 
 brew "ffmpeg"
 brew "mtr"
