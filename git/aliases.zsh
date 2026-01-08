@@ -4,6 +4,7 @@ alias glr='git reup --prune'
 alias gp='git push origin HEAD'
 alias gpu='git push --set-upstream origin $(git rev-parse --abbrev-ref HEAD)'
 alias gpfl='gp --force-with-lease'
+alias gfa='git fetch --all'
 
 # Log & diff
 alias glog="git log --graph --pretty=format:'%Cred%h%Creset %an: %s - %Creset %C(yellow)%d%Creset %Cgreen(%cr)%Creset' --abbrev-commit --date=relative"
