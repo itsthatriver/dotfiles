@@ -13,7 +13,7 @@ alias gd='git diff' # when using git-delta or diff-so-fancy
 
 # Repo & branch lifecycle
 alias gco='git checkout'
-# alias gb='git branch'
+alias gcnb='git checkout -b'
 alias gw='git-switch-fzf'
 alias gwd='git switch `default-branch`' # See zsh/functions/default-branch
 alias gn='git switch -c'
