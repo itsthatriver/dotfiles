@@ -1,2 +1,3 @@
+brew "gh"
 brew "git"
 brew "git-delta"
