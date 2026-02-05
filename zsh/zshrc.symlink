@@ -32,6 +32,10 @@ fi
 # Source every .zsh file in this repo
 for config_file ($ZSH/**/*.zsh~*/backups/*) source $config_file
 
+# source every .path file in this repo -- path updates come before completions
+# since completion scripts may need to execute binaries added by .path files
+for config_file ($ZSH/**/*.path~*/backups/*) source $config_file
+
 # initialize autocomplete here, otherwise functions won't be loaded
 # On slow systems, checking the cached .zcompdump file to see if it must be
 # regenerated adds a noticable delay to zsh startup.  This little hack restricts
@@ -58,9 +62,6 @@ eval "$(zoxide init zsh)"
 # Auto-time commands that run longer than $REPORTTIME seconds
 export TIMEFMT="%U user %S system %P cpu %*E total, running %J"
 REPORTTIME=3
-
-# source every .path file in this rep -- path updates should come last
-for config_file ($ZSH/**/*.path~*/backups/*) source $config_file
 #eval `/usr/libexec/path_helper -s`
 
 # Add iTerm shell integration
@@ -78,7 +79,3 @@ if [[ -a ~/.localrc ]]; then
 fi
 
 # -------------------------------------------------------------------------------------------------=
-
-eval "$(brew shellenv)"
-
-. "$HOME/.local/bin/env"

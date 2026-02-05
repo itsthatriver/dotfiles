@@ -1,0 +1,2 @@
+# uv installs to ~/.local/bin and creates an env file for PATH setup
+[[ -f "$HOME/.local/bin/env" ]] && . "$HOME/.local/bin/env"
