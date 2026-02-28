@@ -26,6 +26,14 @@
             "command": "uv run \"$HOME/.claude/hooks/prompt_questions.py\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run \"$HOME/.claude/hooks/prompt_pr_scope.py\""
+          }
+        ]
       }
     ],
     "PreToolUse": [

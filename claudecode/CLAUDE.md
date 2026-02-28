@@ -77,6 +77,21 @@ Do not hallucinate function signatures. A wrong import is worse than asking a qu
 
 ---
 
+## Existing Tooling Check
+
+Before starting work on new tooling, automation, linting, or developer experience improvements,
+search for existing solutions. Scale effort to the size of the task:
+
+| Task size | Check |
+|-----------|-------|
+| Patch/small | `gh pr list --search '<keywords>'` + grep the repo for existing configs/scripts |
+| Task | Above + search Linear for related issues (`Linear_ListIssues`) |
+| Feature | Above + search Slack for prior discussions (`slack_search_public`) + check Google Docs if relevant |
+
+Do not build what already exists or is already in-flight.
+
+---
+
 ## Self-Testing
 
 Never ask the user to test something you can test yourself. Run the tests. Read the output. Fix failures.
@@ -101,6 +116,31 @@ Run static checks automatically. Escalate through layers only when the repo supp
 - **LOC gate:** commit before exceeding 400 lines of uncommitted changes.
 - Small, atomic commits enable agent handoffs — the commit log IS the context transfer mechanism.
 - Never bundle unrelated changes in one commit.
+
+---
+
+## PR Scope Discipline
+
+Monitor PR growth continuously. When **any** threshold is crossed, stop current work and re-evaluate:
+
+| Metric | Threshold |
+|--------|-----------|
+| Commits on branch | 5 |
+| Lines changed (adds + dels) | 1000 |
+| Files changed | 15 |
+| Review fix-up rounds | 2 |
+
+**When triggered:**
+
+1. STOP. Announce: "PR scope check — [metric] at [value]/[threshold]."
+2. Summarize what the PR currently contains (group by logical concern).
+3. Propose 2-3 ways to break it down (stacked PRs, ship-what's-done + follow-up, extract standalone changes).
+4. Wait for user direction before continuing.
+
+A hook injects PR metrics into context automatically. If you see the warning and the user
+continues without acting on it, respect that decision — the hook will suppress for several
+prompts and only re-check if scope has grown further. The LOC gate (400 lines per commit)
+catches local bloat; this catches PR-level bloat.
 
 ---
 
