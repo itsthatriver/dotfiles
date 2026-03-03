@@ -1,0 +1,1 @@
+alias dang="claude --allow-dangerously-skip-permissions"

@@ -1,0 +1,1 @@
+alias rgf="rg --no-ignore-vcs"
