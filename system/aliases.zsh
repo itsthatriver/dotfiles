@@ -1,1 +1,1 @@
-alias rgf="rg --no-ignore-vcs"
+alias rgf="rg -. -g '!.git'"

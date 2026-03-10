@@ -19,7 +19,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SESSION_LOGS_DIR = Path.home() / ".claude" / "session-logs"
-SESSION_STATE_FILE = Path.home() / ".claude" / ".session-state.json"
+SESSION_STATE_DIR = Path.home() / ".claude" / ".session-states"
+
+
+def _state_file(session_id: str) -> Path:
+    """Per-session state file to avoid collisions across parallel worktrees."""
+    return SESSION_STATE_DIR / f"{session_id}.json"
 
 
 def handle_start():
@@ -29,14 +34,15 @@ def handle_start():
     except (json.JSONDecodeError, EOFError):
         data = {}
 
+    session_id = data.get("session_id", "unknown")
     state = {
         "start_time": datetime.now(timezone.utc).isoformat(),
-        "session_id": data.get("session_id", "unknown"),
+        "session_id": session_id,
         "cwd": data.get("cwd", os.getcwd()),
     }
 
-    SESSION_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SESSION_STATE_FILE.write_text(json.dumps(state, indent=2))
+    SESSION_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _state_file(session_id).write_text(json.dumps(state, indent=2))
 
 
 def handle_end():
@@ -46,13 +52,15 @@ def handle_end():
     except (json.JSONDecodeError, EOFError):
         data = {}
 
-    # Load start state
+    session_id = data.get("session_id", "unknown")
+
+    # Load start state (per-session file)
+    state_file = _state_file(session_id)
     try:
-        state = json.loads(SESSION_STATE_FILE.read_text())
+        state = json.loads(state_file.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         state = {}
 
-    session_id = data.get("session_id", state.get("session_id", "unknown"))
     start_time = state.get("start_time", "")
     project = data.get("cwd", state.get("cwd", "unknown"))
     transcript_path = data.get("transcript_path", "")
@@ -61,6 +69,11 @@ def handle_end():
     prompts = []
     tools_used: set[str] = set()
     files_modified: set[str] = set()
+
+    if not transcript_path:
+        print(f"session_summarize: no transcript_path in SessionEnd data (session={session_id[:8]})", file=sys.stderr)
+    elif not os.path.isfile(transcript_path):
+        print(f"session_summarize: transcript not found: {transcript_path} (session={session_id[:8]})", file=sys.stderr)
 
     if transcript_path and os.path.isfile(transcript_path):
         try:
@@ -74,9 +87,15 @@ def handle_end():
                     except json.JSONDecodeError:
                         continue
 
+                    # JSONL wraps role/content inside entry["message"]
+                    msg = entry.get("message", {})
+                    if not isinstance(msg, dict):
+                        continue
+                    role = msg.get("role")
+                    content = msg.get("content", "")
+
                     # Extract user prompts
-                    if entry.get("role") == "user":
-                        content = entry.get("content", "")
+                    if role == "user":
                         if isinstance(content, str) and content.strip():
                             prompts.append(content.strip()[:200])
                         elif isinstance(content, list):
@@ -87,17 +106,15 @@ def handle_end():
                                         prompts.append(text[:200])
 
                     # Extract tool usage
-                    if entry.get("role") == "assistant":
-                        content = entry.get("content", [])
-                        if isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict) and block.get("type") == "tool_use":
-                                    tool_name = block.get("name", "")
-                                    tools_used.add(tool_name)
-                                    tool_input = block.get("input", {})
-                                    fp = tool_input.get("file_path") or tool_input.get("path", "")
-                                    if fp and tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
-                                        files_modified.add(fp)
+                    elif role == "assistant" and isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                tool_name = block.get("name", "")
+                                tools_used.add(tool_name)
+                                tool_input = block.get("input", {})
+                                fp = tool_input.get("file_path") or tool_input.get("path", "")
+                                if fp and tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+                                    files_modified.add(fp)
         except OSError:
             pass
 
@@ -111,6 +128,16 @@ def handle_end():
             duration_str = str(minutes)
         except ValueError:
             pass
+
+    # Skip empty stub sessions (zero-duration with no captured content)
+    duration_minutes = int(duration_str) if duration_str else 0
+    if duration_minutes == 0 and not prompts and not tools_used and not files_modified:
+        # Cleanup state file even when skipping
+        try:
+            state_file.unlink()
+        except FileNotFoundError:
+            pass
+        return
 
     # Generate summary markdown
     now = datetime.now(timezone.utc)
@@ -172,7 +199,7 @@ def handle_end():
 
     # Cleanup state file
     try:
-        SESSION_STATE_FILE.unlink()
+        state_file.unlink()
     except FileNotFoundError:
         pass
 

@@ -20,6 +20,26 @@ If a knowledge index tool is available (via MCP), also search for additional con
 - Search for recent session summaries
 - Search for patterns in past interactions
 
+### 1b. Git Log Fallback
+
+If session logs lack transcript content (no prompts, tools, or files sections), supplement with git history from known project directories:
+
+```bash
+# Check common project roots for recent commits by the current user
+for dir in ~/src/*/ ~/work/*/; do
+  if [ -d "$dir/.git" ]; then
+    commits=$(git -C "$dir" log --oneline --after="7 days ago" --author="$(git config user.name)" 2>/dev/null)
+    if [ -n "$commits" ]; then
+      echo "=== $(basename $dir) ==="
+      echo "$commits"
+      echo
+    fi
+  fi
+done
+```
+
+Use commit messages to infer work patterns (files touched, types of changes, project focus areas) when session logs are metadata-only.
+
 ### 2. Analyze Patterns
 
 For each session log, extract:
