@@ -51,6 +51,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "uv run \"$HOME/.claude/hooks/pre_tool_spec_guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
             "command": "uv run \"$HOME/.claude/hooks/pre_tool_quality.py\""
           }
         ]

@@ -185,6 +185,36 @@ intake -> define-behavior -> scenario-gate -> decomposition -> implement -> done
 
 ---
 
+## Spec-Driven Development
+
+Specs capture behavioral intent before implementation begins. They sit upstream of BDD scenarios:
+specs define WHAT; BDD scenarios define HOW to verify.
+
+| Artifact | Location | Created by |
+|----------|----------|------------|
+| Spec file | `.project/specs/<slug>.md` | `/build-spec` |
+| Spec tests | Project test directory | `/codify-spec` |
+
+**Skill pipeline:**
+
+```text
+/build-spec → /review-spec → /codify-spec → /review-spec-tests
+```
+
+**Lifecycle:** `draft` → `reviewed` → `codified` → `validated` (backward transitions valid via `/update-spec`).
+
+See `claudecode/spec-format.md` for the full format reference, section guide, and examples.
+
+**Rules:**
+
+1. **Specs before implementation** — use `/build-spec` to create, not hand-written markdown.
+2. **Spec tests are generated** by `/codify-spec`, never hand-edited.
+3. **Spec tests are immutable** during implementation (hook enforces `permissionDecision: "ask"`).
+4. **Specs are source of truth** for behavioral intent.
+5. **New information** (bugs, requirements) flows through `/update-spec` (future), not direct edits.
+
+---
+
 ## Linear Integration
 
 When work is associated with a Linear issue:
