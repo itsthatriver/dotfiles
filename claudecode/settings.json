@@ -1,11 +1,27 @@
 {
+  "apiKeyHelper": "/Users/jostevens/.claude/api-key-helper.sh",
+  "permissions": {
+    "allow": [
+      "mcp__arcade__Linear_ListIssues",
+      "Bash(grep:*)",
+      "Bash(gh pr:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(uv run:*)",
+      "Bash(porter:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(python3:*)"
+    ]
+  },
+  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/session_summarize.py\" start"
+            "command": "uv run --script /Users/jostevens/.claude/hooks/session_summarize.py start"
           }
         ]
       }
@@ -15,81 +31,61 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/prompt_timestamp.py\""
-          }
-        ]
-      },
-      {
-        "hooks": [
+            "command": "uv run --script /Users/jostevens/.claude/hooks/prompt_questions.py"
+          },
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/prompt_questions.py\""
-          }
-        ]
-      },
-      {
-        "hooks": [
+            "command": "uv run --script /Users/jostevens/.claude/hooks/prompt_timestamp.py"
+          },
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/prompt_pr_scope.py\""
+            "command": "uv run --script /Users/jostevens/.claude/hooks/prompt_pr_scope.py"
+          },
+          {
+            "type": "command",
+            "command": "/Users/jostevens/.superset/hooks/notify.sh"
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/pre_tool_config_guard.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
+            "command": "uv run --script /Users/jostevens/.claude/hooks/pre_tool_quality.py"
+          },
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/pre_tool_spec_guard.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
+            "command": "uv run --script /Users/jostevens/.claude/hooks/pre_tool_config_guard.py"
+          },
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/pre_tool_quality.py\""
+            "command": "uv run --script /Users/jostevens/.claude/hooks/pre_tool_spec_guard.py"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/post_tool_lint.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
+            "command": "uv run --script /Users/jostevens/.claude/hooks/post_tool_quality.py"
+          },
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/post_tool_bypass_warn.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
+            "command": "uv run --script /Users/jostevens/.claude/hooks/post_tool_lint.py"
+          },
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/post_tool_quality.py\""
+            "command": "uv run --script /Users/jostevens/.claude/hooks/post_tool_bypass_warn.py"
+          },
+          {
+            "type": "command",
+            "command": "/Users/jostevens/.superset/hooks/notify.sh"
           }
         ]
       }
@@ -99,7 +95,33 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/stop_quality.py\""
+            "command": "uv run --script /Users/jostevens/.claude/hooks/stop_quality.py"
+          },
+          {
+            "type": "command",
+            "command": "/Users/jostevens/.superset/hooks/notify.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/jostevens/.superset/hooks/notify.sh"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/jostevens/.superset/hooks/notify.sh"
           }
         ]
       }
@@ -109,11 +131,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOME/.claude/hooks/session_summarize.py\" end"
+            "command": "uv run --script /Users/jostevens/.claude/hooks/session_summarize.py end"
           }
         ]
       }
     ]
   },
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "mcpServers": {
+    "mcp-arcade-dev": {
+      "url": "https://api.arcade.dev/mcp/gw_38UrRAZRyAXpNLoOEPYWlbvR0cM",
+      "headers": {
+        "Authorization": "Bearer arc_proj1Fr3B1SwUGDysJxrZjJTsD7RPRzdGkNfSGiG2GXtTV3LQ0V4tcw",
+        "Arcade-User-ID": "jo@arcade.dev"
+      }
+    }
+  }
 }

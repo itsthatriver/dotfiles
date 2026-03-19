@@ -13,6 +13,8 @@ import json
 import re
 import sys
 
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
 PROTECTED_PATTERNS = [
     # Go
     r"(^|/)go\.(mod|sum)$",
@@ -61,6 +63,9 @@ def main():
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
+        sys.exit(0)
+
+    if data.get("tool_name") not in EDIT_TOOLS:
         sys.exit(0)
 
     file_path = get_file_path(data)

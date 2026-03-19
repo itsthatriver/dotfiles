@@ -14,6 +14,8 @@ import json
 import re
 import sys
 
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
 PROTECTED_PATTERNS = [
     r"(^|/)spec_tests/",          # anything in a spec_tests/ directory
     r"(^|/)spec_[^/]+_test\.",    # spec_foo_test.py, spec_auth_test.go
@@ -30,6 +32,9 @@ def main():
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
+        sys.exit(0)
+
+    if data.get("tool_name") not in EDIT_TOOLS:
         sys.exit(0)
 
     file_path = get_file_path(data)
