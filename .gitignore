@@ -5,5 +5,6 @@ Brewfile.lock.json
 .runtime/
 .claude/
 .logs/
+.beads/
 __pycache__/
 state.json
