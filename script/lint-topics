@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#
+# lint-topics — validate topic directories follow expected conventions.
+#
+# Checks:
+#   1. No .bk, .backup, or .tmp files tracked in git
+#   2. All disabled files use .disabled suffix (not .disable or other variants)
+#   3. No empty topic directories (zero tracked files)
+#   4. No .c source files tracked without a corresponding build step
+#   5. All install.sh files are executable
+
+cd "$(dirname "$0")/.."
+
+ERRORS=0
+
+fail() {
+  printf "  ✗ %s\n" "$1"
+  ERRORS=$((ERRORS + 1))
+}
+
+ok() {
+  printf "  ✓ %s\n" "$1"
+}
+
+# 1. No .bk, .backup, or .tmp files tracked in git
+echo "» Checking for stale backup/temp files..."
+while IFS= read -r file; do
+  fail "stale file tracked in git: $file"
+done < <(git ls-files | grep -E '\.(bk|backup|tmp)$')
+[ "$ERRORS" -eq 0 ] && ok "no .bk / .backup / .tmp files"
+
+# 2. All disabled files use .disabled (not .disable or other variants)
+echo "» Checking disabled file naming..."
+disabled_errors=0
+while IFS= read -r file; do
+  fail "wrong disabled suffix (use .disabled): $file"
+  disabled_errors=$((disabled_errors + 1))
+done < <(git ls-files | grep -E '\.disable$')
+[ "$disabled_errors" -eq 0 ] && ok "all disabled files use .disabled"
+
+# 3. No empty topic directories
+echo "» Checking for empty topic directories..."
+empty_errors=0
+for dir in */; do
+  topic="${dir%/}"
+  # Skip non-topic dirs (script, bin are utilities, not topics)
+  [[ "$topic" == "script" || "$topic" == "bin" ]] && continue
+  count=$(git ls-files -- "$dir" | wc -l | tr -d ' ')
+  if [ "$count" -eq 0 ]; then
+    fail "empty topic directory: $topic/"
+    empty_errors=$((empty_errors + 1))
+  fi
+done
+[ "$empty_errors" -eq 0 ] && ok "no empty topic directories"
+
+# 4. No .c source files without a corresponding build step
+echo "» Checking for orphaned .c source files..."
+c_errors=0
+while IFS= read -r cfile; do
+  topic_dir="$(dirname "$cfile")"
+  # A build step exists if there's an install.sh anywhere in the same topic tree
+  if ! git ls-files -- "${topic_dir%/src}/" | grep -q 'install\.sh$'; then
+    fail ".c file without build step: $cfile"
+    c_errors=$((c_errors + 1))
+  fi
+done < <(git ls-files | grep '\.c$')
+[ "$c_errors" -eq 0 ] && ok "no orphaned .c source files"
+
+# 5. All install.sh files are executable
+echo "» Checking install.sh executability..."
+exec_errors=0
+while IFS= read -r installer; do
+  if [ ! -x "$installer" ]; then
+    fail "install.sh not executable: $installer"
+    exec_errors=$((exec_errors + 1))
+  fi
+done < <(git ls-files | grep 'install\.sh$')
+[ "$exec_errors" -eq 0 ] && ok "all install.sh files are executable"
+
+echo ""
+if [ "$ERRORS" -gt 0 ]; then
+  printf "✗ lint-topics: %d error(s) found\n" "$ERRORS"
+  exit 1
+else
+  printf "✓ lint-topics: all checks passed\n"
+  exit 0
+fi
