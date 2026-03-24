@@ -239,3 +239,8 @@ def example():
 ````
 
 Never use bare triple-backtick fences. This enables syntax highlighting and tooling integration.
+
+---
+
+<!-- Local additions (machine-specific, gitignored) -->
+@CLAUDE.local.md
