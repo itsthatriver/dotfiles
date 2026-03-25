@@ -1,8 +1,9 @@
 description = """
 Standing patrol for open PR review feedback and failing CI checks.
 
-Scans all open PRs across rigs, identifies those needing attention (review
-feedback or failing CI), and dispatches polecat work beads for each finding.
+Scans the authenticated user's open PRs across rigs, identifies those needing
+attention (review feedback or failing CI), and dispatches polecat work beads
+for each finding.
 A dedup guard prevents re-slinging polecats for PRs that already have open beads.
 
 ## Purpose
@@ -95,6 +96,7 @@ gh pr list \
   --repo {{repo}} \
   --base {{base_branch}} \
   --state open \
+  --author @me \
   --json number,title,url,reviewDecision,statusCheckRollup,isDraft,headRefName \
   --limit 100 \
   > /tmp/open-prs.json
