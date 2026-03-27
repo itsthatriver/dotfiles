@@ -1,0 +1,5 @@
+# Activate mise AFTER brew shellenv (homebrew.path) has run. brew shellenv calls
+# path_helper which pushes system paths to the front. Mise captures __MISE_ORIG_PATH
+# at activation time, so activating after homebrew ensures mise's precmd hook can
+# correctly prepend tool paths (go, node, etc.) ahead of Homebrew versions.
+eval "$(mise activate zsh)"
