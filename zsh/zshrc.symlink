@@ -36,6 +36,11 @@ for config_file ($ZSH/**/*.zsh~*/backups/*) source $config_file
 # since completion scripts may need to execute binaries added by .path files
 for config_file ($ZSH/**/*.path~*/backups/*) source $config_file
 
+# Local binaries take priority over Homebrew. brew shellenv calls path_helper
+# which forces /etc/paths entries (including /opt/homebrew/bin) to the front,
+# pushing ~/.local/bin behind them. Re-prepend after all .path files are done.
+path=($HOME/.local/bin ${path:#$HOME/.local/bin})
+
 # initialize autocomplete here, otherwise functions won't be loaded
 # On slow systems, checking the cached .zcompdump file to see if it must be
 # regenerated adds a noticable delay to zsh startup.  This little hack restricts
