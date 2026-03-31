@@ -22,5 +22,4 @@ alias gs='git st' # See bin/git-st
 alias grm="git status | grep deleted | awk '{print \$3}' | xargs git rm"
 alias ga='git add'
 alias gaa='ga .'
-alias gc='git commit'
 alias gca='git commit -a'
