@@ -86,7 +86,7 @@
 
 [include]
   path = .local.gitconfig
-  path = .dotfiles/git/themes.gitconfig
+  path = dotfiles/git/themes.gitconfig
 [credential "https://github.com"]
 	helper = 
 	helper = !/opt/homebrew/bin/gh auth git-credential
