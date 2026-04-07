@@ -28,6 +28,10 @@ link_formula() {
 
   if [[ -L "$dst" ]] && [[ "$(readlink "$dst")" == "$src" ]]; then
     echo "» ${name} already linked"
+  elif [[ -L "$dst" ]]; then
+    # Symlink exists but points elsewhere — update it
+    ln -sf "$src" "$dst"
+    echo "» Relinked ${name}"
   elif [[ -e "$dst" ]]; then
     echo "⚠ ${name}: ${dst} exists and is not a symlink — back up and remove manually"
   else

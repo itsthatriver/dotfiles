@@ -1,2 +1,6 @@
-tap "gastownhall/gascity"
-brew "gastownhall/gascity/gascity"
+# gascity is built from source — see install.sh
+# tap "gastownhall/gascity"
+# brew "gastownhall/gascity/gascity"
+
+# flock for launchd job locking
+brew "flock"

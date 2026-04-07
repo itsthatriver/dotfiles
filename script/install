@@ -17,16 +17,16 @@ fi
 
 echo "» Checking topic apps"
 # find the Brewfiles and run them iteratively
-find . -name Brewfile -depth 2 -not -path "./system/*" | while read brewfile ; do
+while read -r brewfile ; do
   echo "——» $brewfile"
-  brew bundle install --file "$brewfile"
-done
+  brew bundle install --file "$brewfile" </dev/null
+done < <(find . -name Brewfile -depth 2 -not -path "./system/*")
 
 # find the installers and run them iteratively
 echo "» Running topic installers"
-find . -name install.sh -depth 2 -not -path "./system/*" | while read installer ; do
+while read -r installer ; do
   echo "——» $installer"
-  sh -c "${installer}"
-done
+  sh -c "${installer}" </dev/null
+done < <(find . -name install.sh -depth 2 -not -path "./system/*")
 
 echo "» Installation complete"
