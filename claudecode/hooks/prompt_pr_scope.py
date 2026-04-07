@@ -4,35 +4,23 @@
 # dependencies = []
 # ///
 
-import hashlib
 import json
 import os
 import subprocess
 import sys
 
-
-def _state_file() -> str:
-    """Worktree-aware state file path to avoid collisions across parallel worktrees."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            tree = result.stdout.strip()
-            suffix = hashlib.sha256(tree.encode()).hexdigest()[:12]
-            return os.path.expanduser(f"~/.claude/pr-scope-state-{suffix}.json")
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-    return os.path.expanduser("~/.claude/pr-scope-state.json")
-
-
-STATE_FILE = _state_file()
-COMMIT_THRESHOLD = 5
+COMMIT_THRESHOLD = 10
 LOC_THRESHOLD = 1000
 FILE_THRESHOLD = 15
-SUPPRESSION_PROMPTS = 5
+SUPPRESS_SKIP_COUNT = 5
 BASE_BRANCH_CANDIDATES = ["main", "master"]
+
+
+def get_state_file(repo_root: str, branch: str) -> str:
+    import hashlib
+    repo_hash = hashlib.sha1(repo_root.encode()).hexdigest()[:8]
+    safe_branch = branch.replace("/", "--")
+    return os.path.expanduser(f"~/.claude/pr-scope-state-{repo_hash}-{safe_branch}.json")
 
 
 def run_git(*args: str) -> str | None:
@@ -51,9 +39,14 @@ def run_git(*args: str) -> str | None:
 
 
 def get_base_branch() -> str | None:
-    for candidate in BASE_BRANCH_CANDIDATES:
-        if run_git("rev-parse", "--verify", candidate) is not None:
-            return candidate
+    # Prefer remote-tracking refs — they reflect the actual PR target
+    # and don't go stale when the local branch isn't updated.
+    # Check ALL remote refs before ANY local ref to avoid a stale local
+    # "main" shadowing a valid "origin/master" (or vice versa).
+    refs = [f"origin/{c}" for c in BASE_BRANCH_CANDIDATES] + list(BASE_BRANCH_CANDIDATES)
+    for ref in refs:
+        if run_git("rev-parse", "--verify", ref) is not None:
+            return ref
     return None
 
 
@@ -82,23 +75,23 @@ def get_metrics(merge_base: str) -> dict:
     return {"commits": commits, "loc": loc, "files": files}
 
 
-def load_state() -> dict:
+def load_state(state_file: str) -> dict:
     try:
-        with open(STATE_FILE) as f:
+        with open(state_file) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def save_state(state: dict):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    with open(STATE_FILE, "w") as f:
+def save_state(state: dict, state_file: str):
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+    with open(state_file, "w") as f:
         json.dump(state, f, indent=2)
 
 
-def clear_state():
+def clear_state(state_file: str):
     try:
-        os.remove(STATE_FILE)
+        os.remove(state_file)
     except FileNotFoundError:
         pass
 
@@ -132,19 +125,19 @@ def format_warning(metrics: dict) -> str:
 
 def format_recheck_warning(current: dict, checkpoint: dict) -> str:
     parts = []
-    for key, label, threshold in [
+    for key, label, _ in [
         ("commits", "commits", COMMIT_THRESHOLD),
         ("loc", "lines", LOC_THRESHOLD),
         ("files", "files", FILE_THRESHOLD),
     ]:
         old = checkpoint.get(key, 0)
         new = current[key]
-        if new >= threshold:
+        if new > old:
             delta = new - old
-            sign = "+" if delta >= 0 else ""
-            parts.append(f"{label} {old:,}→{new:,} ({sign}{delta:,})")
+            sign = "+"
+            parts.append(f"{label} {old:,}->{new:,} ({sign}{delta:,})")
     return (
-        f"PR scope re-check: Since last checkpoint — {', '.join(parts)}. "
+        f"PR scope re-check: Since last checkpoint -- {', '.join(parts)}. "
         f"Scope is growing. See \"PR Scope Discipline\" in CLAUDE.md."
     )
 
@@ -155,15 +148,19 @@ def main():
     except (json.JSONDecodeError, EOFError):
         pass
 
-    if run_git("rev-parse", "--git-dir") is None:
+    repo_root = run_git("rev-parse", "--show-toplevel")
+    if repo_root is None:
         return
 
     current_branch = get_current_branch()
     base_branch = get_base_branch()
     if current_branch is None or base_branch is None:
         return
-    if current_branch == base_branch:
-        clear_state()
+
+    state_file = get_state_file(repo_root, current_branch)
+
+    if current_branch in BASE_BRANCH_CANDIDATES:
+        clear_state(state_file)
         return
 
     merge_base = run_git("merge-base", base_branch, "HEAD")
@@ -172,42 +169,36 @@ def main():
     metrics = get_metrics(merge_base)
 
     if not any_threshold_exceeded(metrics):
-        clear_state()
+        clear_state(state_file)
         return
 
-    state = load_state()
-
-    if state.get("branch") != current_branch:
-        state = {}
-
+    state = load_state(state_file)
     checkpoint = state.get("checkpoint")
 
     if checkpoint is None:
         print(format_warning(metrics))
         save_state({
-            "branch": current_branch,
             "checkpoint": metrics,
             "prompts_since_warning": 0,
-        })
+        }, state_file)
         return
 
     prompts_since = state.get("prompts_since_warning", 0)
 
-    if prompts_since < SUPPRESSION_PROMPTS:
+    if prompts_since < SUPPRESS_SKIP_COUNT:
         state["prompts_since_warning"] = prompts_since + 1
-        save_state(state)
+        save_state(state, state_file)
         return
 
     if scope_increased(metrics, checkpoint):
         print(format_recheck_warning(metrics, checkpoint))
         save_state({
-            "branch": current_branch,
             "checkpoint": metrics,
             "prompts_since_warning": 0,
-        })
+        }, state_file)
     else:
         state["prompts_since_warning"] = 0
-        save_state(state)
+        save_state(state, state_file)
 
 
 if __name__ == "__main__":

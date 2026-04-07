@@ -1,5 +1,4 @@
 {
-  "apiKeyHelper": "/Users/jostevens/.claude/api-key-helper.sh",
   "permissions": {
     "allow": [
       "mcp__arcade__Linear_ListIssues",
@@ -14,7 +13,6 @@
       "Bash(python3:*)"
     ]
   },
-  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -36,14 +34,6 @@
           {
             "type": "command",
             "command": "uv run --script /Users/jostevens/.claude/hooks/prompt_timestamp.py"
-          },
-          {
-            "type": "command",
-            "command": "uv run --script /Users/jostevens/.claude/hooks/prompt_pr_scope.py"
-          },
-          {
-            "type": "command",
-            "command": "/Users/jostevens/.superset/hooks/notify.sh"
           }
         ]
       }
@@ -82,10 +72,6 @@
           {
             "type": "command",
             "command": "uv run --script /Users/jostevens/.claude/hooks/post_tool_bypass_warn.py"
-          },
-          {
-            "type": "command",
-            "command": "/Users/jostevens/.superset/hooks/notify.sh"
           }
         ]
       }
@@ -96,32 +82,6 @@
           {
             "type": "command",
             "command": "uv run --script /Users/jostevens/.claude/hooks/stop_quality.py"
-          },
-          {
-            "type": "command",
-            "command": "/Users/jostevens/.superset/hooks/notify.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/jostevens/.superset/hooks/notify.sh"
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/jostevens/.superset/hooks/notify.sh"
           }
         ]
       }
