@@ -1,1 +1,0 @@
-source <(gt completion zsh)
