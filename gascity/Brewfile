@@ -4,3 +4,6 @@
 
 # flock for launchd job locking
 brew "flock"
+
+# dolt — beads data plane (shared with gastown)
+brew "dolt"
