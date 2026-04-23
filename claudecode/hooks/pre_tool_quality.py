@@ -9,7 +9,6 @@ Blocks edit operations when a quality gate is active.
 Reads quality-state-{hash}.json written by post_tool_quality.py.
 
 Gate types:
-  loc           — must commit to reduce LOC below 400
   refactor      — must complete refactor step after feat: commit
   phase:{name}  — must commit phase transition and read phase instructions
 """
@@ -21,7 +20,6 @@ import subprocess
 import sys
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-LOC_THRESHOLD = 400
 
 PHASE_FILES = {
     "intake": "DISCOVERY.md",
@@ -123,18 +121,7 @@ def main():
 
     # --- Gate-specific denial messages ---
 
-    if gate == "loc":
-        loc = state.get("locSinceCommit", 0)
-        deny(
-            f"LOC gate: {loc}/{LOC_THRESHOLD} uncommitted lines. "
-            "Commit before continuing.\n\n"
-            "TDD commit rhythm:\n"
-            "  RED:      test: {{scenario name}}\n"
-            "  GREEN:    feat: {{scenario name}}\n"
-            "  REFACTOR: refactor: {{description}}"
-        )
-
-    elif gate == "refactor":
+    if gate == "refactor":
         deny(
             "Refactor gate: Complete the RED \u2192 GREEN \u2192 REFACTOR cycle.\n\n"
             "You committed a feat: change. Before writing more code:\n"

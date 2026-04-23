@@ -10,7 +10,9 @@
       "Bash(porter:*)",
       "Bash(git:*)",
       "Bash(ls:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Edit(*)",
+      "Write(*)"
     ]
   },
   "hooks": {
@@ -42,10 +44,6 @@
       {
         "matcher": "*",
         "hooks": [
-          {
-            "type": "command",
-            "command": "uv run --script /Users/jostevens/.claude/hooks/pre_tool_quality.py"
-          },
           {
             "type": "command",
             "command": "uv run --script /Users/jostevens/.claude/hooks/pre_tool_config_guard.py"

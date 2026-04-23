@@ -100,7 +100,7 @@ git root to avoid collisions when multiple worktrees are open simultaneously.
 }
 ```
 
-4. Run `install.sh` (the `hooks/` symlink is already in place, so this is usually a no-op,
+1. Run `install.sh` (the `hooks/` symlink is already in place, so this is usually a no-op,
    but it's good practice).
 
 Exit codes: `0` = success/no-op, `2` = hard block. Output `permissionDecision: "ask"` in
@@ -158,10 +158,12 @@ the task context.
 ### How to add a new command/skill
 
 **Simple command** (single `.md`, invoked as a slash command):
+
 1. Create `commands/<name>.md`.
 2. Run `install.sh`.
 
 **Structured skill** (multi-file, auto-selected by description):
+
 1. Create `skills/<name>/SKILL.md` with the `name` and `description` frontmatter.
 2. Add supporting phase files as needed.
 3. Run `install.sh`.

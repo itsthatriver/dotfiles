@@ -5,11 +5,10 @@
 # ///
 """Quality state observer (PostToolUse hook).
 
-Tracks LOC, detects commits and phase transitions, and sets enforcement gates.
+Detects commits and phase transitions, and sets enforcement gates.
 Writes quality-state-{hash}.json consumed by pre_tool_quality.py and stop_quality.py.
 
 Gate types:
-  loc           — uncommitted LOC >= 400
   refactor      — feat: commit during implement phase, must refactor before continuing
   phase:{name}  — BDD phase transition, must commit and read phase instructions
 """
@@ -24,7 +23,6 @@ import sys
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 RELEVANT_TOOLS = EDIT_TOOLS | {"Bash"}
-LOC_THRESHOLD = 400
 
 
 def _state_file() -> str:
@@ -81,29 +79,6 @@ def get_last_commit_message() -> str:
     except (subprocess.TimeoutExpired, OSError):
         return ""
 
-
-def get_loc_since_commit() -> int:
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--stat", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            return 0
-        lines = result.stdout.strip().split("\n")
-        if not lines or not lines[-1].strip():
-            return 0
-        summary = lines[-1]
-        insertions = deletions = 0
-        for part in summary.split(","):
-            part = part.strip()
-            if "insertion" in part:
-                insertions = int(part.split()[0])
-            elif "deletion" in part:
-                deletions = int(part.split()[0])
-        return insertions + deletions
-    except (subprocess.TimeoutExpired, OSError, ValueError):
-        return 0
 
 
 def read_ticket_phase(file_path: str) -> str | None:
@@ -166,7 +141,6 @@ def main():
         # Clear previous gate on any new commit
         state["gate"] = None
         state["lastCommitHash"] = current_head
-        state["locSinceCommit"] = 0
 
         # Refactor gate: feat: commit during implement phase
         if commit_msg.startswith("feat:") and phase == "implement":
@@ -175,14 +149,6 @@ def main():
     elif not stored_head and current_head:
         # First run — record HEAD without treating as new commit
         state["lastCommitHash"] = current_head
-
-    # --- LOC tracking ---
-    loc = get_loc_since_commit()
-    state["locSinceCommit"] = loc
-
-    # LOC gate (only if no higher-priority gate is active)
-    if not state.get("gate") and loc >= LOC_THRESHOLD:
-        state["gate"] = "loc"
 
     # --- Phase transition detection (ticket.md edits) ---
     if tool_name in EDIT_TOOLS and file_path.endswith("ticket.md"):
