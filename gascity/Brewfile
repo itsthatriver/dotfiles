@@ -1,6 +1,6 @@
-# gascity is built from source — see install.sh
-# tap "gastownhall/gascity"
-# brew "gastownhall/gascity/gascity"
+# gascity — brew-managed (switched from source build 2026-04-28)
+tap "gastownhall/gascity"
+brew "gastownhall/gascity/gascity"
 
 # flock for launchd job locking
 brew "flock"

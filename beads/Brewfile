@@ -1,2 +1,2 @@
-# beads is built from source — see install.sh
-# brew "beads"
+# beads — brew-managed (switched from source build 2026-04-28)
+brew "beads"
