@@ -6,7 +6,6 @@ claudecode/CLAUDE.local.md
 .runtime/
 .claude/
 .logs/
-.beads/
 __pycache__/
 state.json
 
@@ -14,3 +13,8 @@ state.json
 .dolt/
 *.db
 .beads-credential-key
+
+# Gas City
+.beads/*
+!.beads/config.yaml
+!.beads/metadata.json

@@ -85,3 +85,6 @@ if [[ -a ~/.localrc ]]; then
 fi
 
 # -------------------------------------------------------------------------------------------------=
+
+# opencode
+export PATH=/Users/jostevens/.opencode/bin:$PATH
