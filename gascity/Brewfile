@@ -1,9 +1,0 @@
-# gascity — brew-managed (switched from source build 2026-04-28)
-tap "gastownhall/gascity"
-brew "gastownhall/gascity/gascity"
-
-# flock for launchd job locking
-brew "flock"
-
-# dolt — beads data plane (shared with gastown)
-brew "dolt"

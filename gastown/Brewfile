@@ -1,0 +1,28 @@
+# gastown — manually managed, do NOT auto-install/upgrade via brew bundle.
+#
+# Why these are commented out:
+#   bd 1.0.5 silently corrupted Dolt schemas in this workspace (2026-06-05).
+#   We're pinned to exact-version installs (gastown 1.2.0, beads 1.0.4,
+#   dolt 2.1.2) and any future upgrade must be deliberate. `brew bundle
+#   install` would otherwise re-install the latest stable, defeating the pin.
+#
+# The current versions ARE installed and `brew pin`-protected against
+# `brew upgrade`. The pin survives reboots; check with `brew list --pinned`.
+#
+# How to install if these ever need to be set up fresh on a new machine:
+#   brew tap gastownhall/gastown
+#   brew install gastownhall/gastown/gastown@1.2.0    # (no versioned formula today; install latest then pin)
+#   brew install beads          # currently 1.0.5 in homebrew-core — DO NOT USE; use ~/.local/bin/bd 1.0.4 instead
+#   brew install dolt           # tested with 2.1.2
+#   brew install flock
+#   brew pin gastown beads dolt
+#
+# Beads-specific note:
+#   bd 1.0.4 binary lives at ~/.local/bin/bd (manually downloaded from
+#   gastownhall/beads release v1.0.4). Do NOT `brew link beads` — the
+#   homebrew formula points at 1.0.5+ which corrupts the schema.
+#
+# tap "gastownhall/gastown"
+# brew "gastownhall/gastown/gastown"
+# brew "flock"
+# brew "dolt"
