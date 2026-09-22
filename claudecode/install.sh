@@ -22,6 +22,12 @@ link_item() {
   fi
 }
 
+# Claude Code ships via Anthropic's native installer rather than Homebrew. The
+# native build self-updates and installs to ~/.local/bin, which zshrc.symlink
+# prepends ahead of Homebrew so it wins regardless of brew shellenv ordering.
+echo "» Installing/updating Claude Code"
+curl -fsSL https://claude.ai/install.sh | bash
+
 mkdir -p "${CLAUDE_HOME}"
 mkdir -p "${CLAUDE_HOME}/session-logs"
 

@@ -1,5 +1,3 @@
-cask "claude-code"
-
 # Linters for global auto-lint hook
 brew "golangci-lint"
 brew "shellcheck"
