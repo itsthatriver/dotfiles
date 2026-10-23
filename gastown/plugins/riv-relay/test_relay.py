@@ -54,12 +54,14 @@ def issue(
     labels=(),
     description="",
     state=("Todo", "unstarted"),
+    completed_at=None,
 ):
     return {
         "identifier": ident,
         "title": f"Title of {ident}",
         "url": f"https://linear.app/arcadedev/issue/{ident}",
         "updated_at": updated_at,
+        "completed_at": completed_at,
         "state": {"name": state[0], "type": state[1]},
         "labels": [{"name": name} for name in labels],
         "description": description,
@@ -335,6 +337,56 @@ class LabelAndStateChanges(RelayTest):
             issue(updated_at="2026-10-21T11:05:00.000Z", state=("Done", "completed"))
         )
         self.assertEqual(self.subjects(), ["[RIV-9] River closed it: Done"])
+
+
+class ClosesByAgents(RelayTest):
+    def close_with(self, *comments, state=("Done", "completed"), **fields):
+        self.baseline(issue())
+        self.run_once(
+            issue(
+                updated_at="2026-10-21T11:00:00.000Z",
+                state=state,
+                comments=comments,
+                **fields,
+            )
+        )
+        return self.subjects()
+
+    def test_a_close_right_after_an_agent_signed_comment_is_skipped(self):
+        signed = comment(
+            "c-agent", f"Merged, closing.\n\n{SIGNATURE}", "2026-10-21T10:58:00.000Z"
+        )
+        self.assertEqual(self.close_with(signed), [])
+
+    def test_river_canceling_without_a_comment_is_relayed(self):
+        self.assertEqual(
+            self.close_with(state=("Canceled", "canceled")),
+            ["[RIV-9] River closed it: Canceled"],
+        )
+
+    def test_river_closing_after_her_own_comment_is_relayed(self):
+        unsigned = comment("c-river", "Not needed.", "2026-10-21T10:59:00.000Z")
+        self.assertEqual(
+            self.close_with(unsigned),
+            ["[RIV-9] River commented: Not needed.", "[RIV-9] River closed it: Done"],
+        )
+
+    def test_a_close_long_after_an_agent_signed_comment_is_relayed(self):
+        stale = comment(
+            "c-agent", f"Picked this up.\n\n{SIGNATURE}", "2026-10-21T10:30:00.000Z"
+        )
+        self.assertEqual(self.close_with(stale), ["[RIV-9] River closed it: Done"])
+
+    def test_an_agent_comment_after_river_marked_it_done_is_not_her_close(self):
+        reaction = comment(
+            "c-agent",
+            f"Noted, closing the bead.\n\n{SIGNATURE}",
+            "2026-10-21T11:00:00.000Z",
+        )
+        self.assertEqual(
+            self.close_with(reaction, completed_at="2026-10-21T10:57:00.000Z"),
+            ["[RIV-9] River closed it: Done"],
+        )
 
 
 class CursorAndChecks(RelayTest):
