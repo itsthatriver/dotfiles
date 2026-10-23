@@ -27,8 +27,14 @@ fi
 
 # gt skips plugin directories that are symlinks, so each plugin gets a real
 # directory and only its files are linked.
-plugin="riv-relay"
-mkdir -p "${TOWN_PLUGINS}/${plugin}"
-for file in plugin.md relay.py; do
-  link_item "${SCRIPT_DIR}/plugins/${plugin}/${file}" "${TOWN_PLUGINS}/${plugin}/${file}" "${plugin}/${file}"
-done
+link_plugin() {
+  local plugin="$1"
+  shift
+  mkdir -p "${TOWN_PLUGINS}/${plugin}"
+  for file in "$@"; do
+    link_item "${SCRIPT_DIR}/plugins/${plugin}/${file}" "${TOWN_PLUGINS}/${plugin}/${file}" "${plugin}/${file}"
+  done
+}
+
+link_plugin riv-relay plugin.md relay.py
+link_plugin review-inbox plugin.md review_inbox.py
