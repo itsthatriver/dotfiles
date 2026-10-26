@@ -132,7 +132,10 @@ Do not escalate on failure; `relay.py` owns escalation.
 - Description checkbox ticks, only while `needs-river` is set, after two runs
   read the same text, as a list of the boxes that flipped.
 - `needs-river` removed with no River comment relayed since it was set.
-- Moves to a Done or Canceled state.
+- Moves to a Done or Canceled state, unless the issue's latest comment is
+  signed `Δ Delta` and was posted within 10 minutes before the move. Agents
+  close issues as River's user, so that comment is the only sign the move was
+  theirs.
 
 Routing, first match wins: `@phagey` / `@gigi` in the comment, then a label
 `agent:<name>`, then an `Agent: monorepo/crew/<name>` line in the description,

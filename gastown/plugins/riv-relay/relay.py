@@ -47,6 +47,9 @@ TERMINAL_STATE_TYPES = {"completed", "canceled"}
 KNOWN_CREW = ("phagey", "gigi")
 DEFAULT_RECIPIENT = "monorepo/crew/gigi"
 CURSOR_OVERLAP = timedelta(minutes=5)
+# Two runs of the 5-minute gate: an agent's signed comment this close before a
+# move to Done or Canceled marks the move as the agent's.
+AGENT_CLOSE_WINDOW = timedelta(minutes=10)
 ESCALATE_AFTER_FAILURES = 5
 EPOCH = "1970-01-01T00:00:00.000Z"
 
@@ -91,6 +94,28 @@ def save_state(state: dict) -> None:
     partial = STATE_FILE.with_suffix(".tmp")
     partial.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
     partial.replace(STATE_FILE)
+
+
+def is_agent_post(body: str) -> bool:
+    return AGENT_SIGNATURE in body
+
+
+def closed_by_agent(issue: dict) -> bool:
+    """True when the issue's latest comment is an agent's, posted just before the move.
+
+    Linear's completed_at dates a move to Done; nothing dates a move to
+    Canceled, so updated_at stands in for it.
+    """
+    comments = issue.get("comments") or []
+    if not comments:
+        return False
+    latest = max(comments, key=lambda c: c["created_at"])
+    moved_at = parse_time(issue.get("completed_at") or issue["updated_at"])
+    posted_at = parse_time(latest["created_at"])
+    return (
+        is_agent_post(latest["body"])
+        and moved_at - AGENT_CLOSE_WINDOW <= posted_at <= moved_at
+    )
 
 
 def comment_key(comment: dict) -> str:
@@ -222,7 +247,7 @@ def diff_issue(
         known = record["comments"].get(comment["id"])
         if known == key:
             continue
-        silent = AGENT_SIGNATURE in comment["body"] or (
+        silent = is_agent_post(comment["body"]) or (
             known is None and first_sight and comment["created_at"] <= cursor
         )
         if silent:
@@ -273,6 +298,7 @@ def diff_issue(
         not first_sight
         and state_type in TERMINAL_STATE_TYPES
         and previous["state_type"] not in TERMINAL_STATE_TYPES
+        and not closed_by_agent(issue)
     ):
         events.append({"kind": "closed", "settles": {}})
 
