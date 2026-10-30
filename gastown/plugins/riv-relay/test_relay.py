@@ -489,6 +489,36 @@ class FetchCap(RelayTest):
         self.assertEqual(self.run_once(*after), "NOTHING_CHANGED")
 
 
+class RunLease(RelayTest):
+    """One run at a time: a second dog's check must not wipe the first dog's
+    snapshots while it is still fetching."""
+
+    LINES = ["RIV-9 2026-10-21T10:00:00.000Z"]
+
+    def test_a_second_check_while_a_run_is_open_is_busy_and_keeps_snapshots(self):
+        self.assertTrue(self.relay.command_check(self.LINES).startswith("FETCH"))
+        snapshot = self.home / "pending" / "RIV-9.json"
+        snapshot.write_text(json.dumps({"issue": issue()}))
+        self.assertEqual(self.relay.command_check(self.LINES), "BUSY")
+        self.assertTrue(snapshot.exists())
+
+    def test_relay_releases_the_lease(self):
+        self.run_once(issue())
+        self.assertNotEqual(self.relay.command_check(self.LINES), "BUSY")
+
+    def test_fail_releases_the_lease(self):
+        self.relay.command_check(self.LINES)
+        self.relay.command_fail("GetIssue failed")
+        self.assertNotEqual(self.relay.command_check(self.LINES), "BUSY")
+
+    def test_a_stale_lease_from_a_crashed_run_is_taken_over(self):
+        self.relay.command_check(self.LINES)
+        lease = self.home / "run.lease"
+        old = lease.stat().st_mtime - self.relay.RUN_LEASE_TTL.total_seconds() - 60
+        os.utime(lease, (old, old))
+        self.assertTrue(self.relay.command_check(self.LINES).startswith("FETCH"))
+
+
 class DeliveryAndFailures(RelayTest):
     def test_dry_run_logs_instead_of_sending_and_replays_history(self):
         self.run_once(

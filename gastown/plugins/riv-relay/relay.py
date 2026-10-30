@@ -42,6 +42,9 @@ DEFAULT_MAX_FETCH = 6
 DRY_RUN_LOG = RUNTIME_DIR / "dry-run.log"
 DELIVER_FLAG = RUNTIME_DIR / "DELIVER"
 LOCK_FILE = RUNTIME_DIR / "relay.lock"
+# A run spans check → the dog's fetches → relay, so it holds a lease across all
+# three. Without it, a second dog's check wipes the first dog's snapshots.
+RUN_LEASE = RUNTIME_DIR / "run.lease"
 GT = os.environ.get("RIV_RELAY_GT", "gt")
 
 # Agents post to Linear as River's user, so authorship can't separate them from
@@ -56,6 +59,8 @@ CURSOR_OVERLAP = timedelta(minutes=5)
 # move to Done or Canceled marks the move as the agent's.
 AGENT_CLOSE_WINDOW = timedelta(minutes=10)
 ESCALATE_AFTER_FAILURES = 5
+# Longer than any run takes; a lease this old belongs to a run that died.
+RUN_LEASE_TTL = timedelta(minutes=20)
 EPOCH = "1970-01-01T00:00:00.000Z"
 
 MENTION = re.compile(r"(?<![\w@])@(" + "|".join(KNOWN_CREW) + r")\b", re.IGNORECASE)
@@ -406,7 +411,35 @@ def in_progress(record: dict, previous: dict | None) -> dict:
     return progress
 
 
+def run_in_progress() -> bool:
+    if not RUN_LEASE.exists():
+        return False
+    age = datetime.now(timezone.utc).timestamp() - RUN_LEASE.stat().st_mtime
+    return age < RUN_LEASE_TTL.total_seconds()
+
+
+def release_run() -> None:
+    RUN_LEASE.unlink(missing_ok=True)
+
+
 def command_check(lines: list[str]) -> str:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if run_in_progress():
+            return "BUSY"
+        RUN_LEASE.write_text(format_time(datetime.now(timezone.utc)))
+    try:
+        answer = check_listing(lines)
+    except Exception:
+        release_run()
+        raise
+    if answer == "NOTHING_CHANGED":
+        release_run()
+    return answer
+
+
+def check_listing(lines: list[str]) -> str:
     state = load_state()
     listing = {}
     for line in lines:
@@ -501,11 +534,13 @@ def command_relay() -> str:
         BATCH_FILE.unlink(missing_ok=True)
         state["consecutive_failures"] = 0
         save_state(state)
+        release_run()
     mode = "logged to dry-run.log" if is_dry_run() else "sent"
     return f"riv-relay: {sent} mail(s) {mode} from {len(listing)} RIV issue(s)"
 
 
 def command_fail(reason: str) -> str:
+    release_run()
     state = load_state()
     state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
     save_state(state)
