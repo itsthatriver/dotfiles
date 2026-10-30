@@ -445,6 +445,50 @@ class CursorAndChecks(RelayTest):
             self.relay.command_relay()
 
 
+class FetchCap(RelayTest):
+    """A run fetches at most RIV_RELAY_MAX_FETCH issues, so a dog never has to
+    transcribe a whole backlog in one session."""
+
+    def cap(self, value):
+        os.environ["RIV_RELAY_MAX_FETCH"] = str(value)
+        self.env["RIV_RELAY_MAX_FETCH"] = str(value)
+
+    def test_check_asks_for_at_most_the_cap_oldest_change_first(self):
+        self.cap(2)
+        lines = [
+            "RIV-3 2026-10-21T12:00:00.000Z",
+            "RIV-1 2026-10-21T10:00:00.000Z",
+            "RIV-2 2026-10-21T11:00:00.000Z",
+        ]
+        self.assertEqual(self.relay.command_check(lines), "FETCH RIV-1 RIV-2")
+
+    def test_deferred_issues_hold_the_cursor_and_relay_on_the_next_run(self):
+        before = [
+            issue(ident=f"RIV-{n}", updated_at=f"2099-01-01T1{n}:00:00.000Z")
+            for n in (1, 2, 3)
+        ]
+        self.baseline(*before)
+        cursor = self.state()["cursor"]
+        self.cap(2)
+        after = [
+            issue(
+                ident=f"RIV-{n}",
+                updated_at=f"2099-01-02T1{n}:00:00.000Z",
+                comments=[comment(f"c{n}", f"Note {n}", f"2099-01-02T1{n}:00:00.000Z")],
+            )
+            for n in (1, 2, 3)
+        ]
+        self.run_once(*after)
+        self.assertEqual(len(self.mails()), 2)
+        self.assertEqual(self.state()["cursor"], cursor)
+        self.run_once(*after)
+        subjects = self.subjects()
+        self.assertEqual(len(subjects), 3)
+        self.assertEqual(len(set(subjects)), 3)
+        self.assertGreater(self.state()["cursor"], cursor)
+        self.assertEqual(self.run_once(*after), "NOTHING_CHANGED")
+
+
 class DeliveryAndFailures(RelayTest):
     def test_dry_run_logs_instead_of_sending_and_replays_history(self):
         self.run_once(

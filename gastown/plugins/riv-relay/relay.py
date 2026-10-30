@@ -34,6 +34,11 @@ RUNTIME_DIR = Path(
 STATE_FILE = RUNTIME_DIR / "state.json"
 PENDING_DIR = RUNTIME_DIR / "pending"
 LISTING_FILE = PENDING_DIR / "listing.txt"
+# The issues this run was asked to fetch. Anything else that changed waits.
+BATCH_FILE = PENDING_DIR / "batch.txt"
+# A dog copies each fetched issue into a snapshot by hand, so one run can
+# only take a few. A backlog drains over several runs.
+DEFAULT_MAX_FETCH = 6
 DRY_RUN_LOG = RUNTIME_DIR / "dry-run.log"
 DELIVER_FLAG = RUNTIME_DIR / "DELIVER"
 LOCK_FILE = RUNTIME_DIR / "relay.lock"
@@ -372,6 +377,10 @@ def escalate(reason: str) -> None:
     )
 
 
+def max_fetch() -> int:
+    return max(1, int(os.environ.get("RIV_RELAY_MAX_FETCH", DEFAULT_MAX_FETCH)))
+
+
 def needs_fetch(issues: dict, ident: str, updated_at: str) -> bool:
     # A pending description change is confirmed by reading the issue once more.
     known = issues.get(ident)
@@ -418,13 +427,17 @@ def command_check(lines: list[str]) -> str:
     LISTING_FILE.write_text(
         "".join(f"{ident} {stamp}\n" for ident, stamp in listing.items())
     )
-    fetch = [
-        ident
-        for ident, stamp in listing.items()
-        if needs_fetch(state["issues"], ident, stamp)
-    ]
-    if fetch:
-        return "FETCH " + " ".join(fetch)
+    changed = sorted(
+        (
+            (parse_time(stamp), ident)
+            for ident, stamp in listing.items()
+            if needs_fetch(state["issues"], ident, stamp)
+        ),
+    )
+    batch = [ident for _, ident in changed[: max_fetch()]]
+    if batch:
+        BATCH_FILE.write_text(" ".join(batch))
+        return "FETCH " + " ".join(batch)
     LISTING_FILE.unlink()
     state["consecutive_failures"] = 0
     save_state(state)
@@ -453,9 +466,14 @@ def command_relay() -> str:
         issues = state["issues"]
         # Every issue in a run is judged against the cursor the run started with.
         cursor = state["cursor"]
+        batch = set(BATCH_FILE.read_text().split()) if BATCH_FILE.exists() else None
+        deferred = False
         sent = 0
         for ident, updated_at in listing.items():
             if not needs_fetch(issues, ident, updated_at):
+                continue
+            if batch is not None and ident not in batch:
+                deferred = True
                 continue
             issue = read_snapshot(ident)
             previous = issues.get(ident)
@@ -474,9 +492,13 @@ def command_relay() -> str:
             issues[ident] = record
             save_state(state)
             (PENDING_DIR / f"{ident}.json").unlink()
-        newest = max(parse_time(stamp) for stamp in listing.values())
-        state["cursor"] = max(cursor, format_time(newest - CURSOR_OVERLAP))
+        # A deferred issue is read in a later run against this same cursor, so a
+        # new issue's recent comments aren't mistaken for history.
+        if not deferred:
+            newest = max(parse_time(stamp) for stamp in listing.values())
+            state["cursor"] = max(cursor, format_time(newest - CURSOR_OVERLAP))
         LISTING_FILE.unlink()
+        BATCH_FILE.unlink(missing_ok=True)
         state["consecutive_failures"] = 0
         save_state(state)
     mode = "logged to dry-run.log" if is_dry_run() else "sent"
