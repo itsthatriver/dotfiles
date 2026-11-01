@@ -36,16 +36,30 @@ file.
 
 ## Rules
 
-- Use ONLY the `prod-full-suite` MCP server's `Arcade_UseTool` (find tools with
-  its `Arcade_SelectTools`). Read Slack with `Slack.SearchMessages`,
-  `Slack.ListConversations`, `Slack.ListMessages`, `Slack.GetThread` and
-  `Slack.GetMessage`. Make ONLY the Linear calls `slack_triage.py` prints.
+- Use ONLY the `prod-full-suite` MCP server's `Arcade_UseTool`. The tools you
+  need are listed under "Tools" below, so skip `Arcade_SelectTools` (it returns
+  ~50 KB). Read Linear only with `Linear.ListIssues` and `Linear.GetIssue`
+  (Step 3). Make ONLY the Linear writes `slack_triage.py` prints.
 - **Never post, react, forward or join anything in Slack.** Never DM anyone.
 - If a tool answers with an authorization link or asks you to sign in, do NOT
   follow it. Treat it as a failed read (Step 5).
 - Never run `gt mail send` or `gt escalate` yourself.
 - Never put words in River's mouth. Every claim in an issue comes from a
   message you read in full.
+
+## Tools
+
+Always pass `"timezone": "UTC"` to the Slack tools that accept it: search
+defaults to UTC, but thread and history reads default to River's Pacific time.
+
+| Tool | Key inputs |
+|---|---|
+| `Slack.SearchMessages` | `query` (classic: `from:`, `to:`, `in:`, `after:YYYY-MM-DD`), `sort` `timestamp`, `order` `desc`, `limit` ≤ 20, `cursor` from `next_cursor` |
+| `Slack.GetThread` | `message`: a `C…:<ts>` reference or a permalink (a reply resolves to its thread); `after`/`before` ISO with `Z`; `limit` ≤ 20 |
+| `Slack.GetMessage` | `message`, as above; follow `next_cursor` until empty |
+| `Slack.ListMessages` | `conversation` (a `C`/`G`/`D` ID), `after`/`before` ISO with `Z`, `limit` ≤ 20 |
+| `Linear.ListIssues` | `{"team": "RIV", "limit": 50}`, paged by `end_cursor` |
+| `Linear.GetIssue` | `{"issue_id": "RIV-12"}` |
 
 ## Step 1: Take the window
 
@@ -60,41 +74,53 @@ python3 ~/gt/plugins/slack-triage/slack_triage.py begin
 
 ## Step 2: Read Slack for the window
 
-River is `U0A1CB9AT3Q` (`@river`). Skip her own messages. Four sources:
+River is `U0A1CB9AT3Q` (`@river`). Skip her own messages.
 
-1. **Mentions:** `Slack.SearchMessages` with query
-   `@river -from:@river after:<start date minus 1 day>`, `sort` `timestamp`,
-   `order` `desc`. Classic `after:` is a whole date and exclusive, so keep only
-   results whose `posted_at` falls inside the window. Follow `next_cursor`
-   until results are older than `<start>`.
-2. **DMs and group DMs:** `Slack.ListConversations` with `conversation_types`
-   `["im", "mpim"]`, `projection` `ids`, `include_archived` false. For each,
-   `Slack.ListMessages` with `after` `<start>` and `before` `<end>`. A bot
-   message counts only if it assigns River something (calendar reminders and
-   other agents' FYIs do not).
-3. **Threads she's in:** `Slack.SearchMessages` with query
-   `from:@river after:<start date minus 3 days>`, `sort` `timestamp`. For each
-   distinct thread, `Slack.GetThread` with `after` `<start>` to see new replies
-   from other people.
-4. **Her areas (discovery):** `Slack.SearchMessages` in channels she's in for
-   new threads about platform, infra, security, auth, agents/MCP, tool
-   recommendation, deployments/on-prem, coding-agent tooling, observability,
-   ADRs/eng process, and feature flags/org model. Keep this light: one or two
-   queries, top results only.
+Classic search's `after:` is a whole date, exclusive, and in Pacific time, so
+always search from **two days before** `<start>`, sort by `timestamp`
+(`order` `desc`), and keep only results whose `posted_at` falls inside the
+window. Follow `next_cursor` until results are older than `<start>`. Four
+sources:
+
+1. **Mentions:** `@river -from:@river after:<start date minus 2 days>`.
+2. **DMs and group DMs:** `to:@river -from:@river after:<start date minus 2 days>`.
+   It covers every DM in one or two pages. Don't list conversations; there
+   are over 100. A bot message counts only if it assigns River something
+   (calendar reminders and other people's agents' FYIs don't).
+3. **Threads she's in:** `from:@river after:<start date minus 1 day>`. Take
+   the distinct thread of each result (`thread_ts` in the permalink, else the
+   message itself), skip DMs (source 2 covers them) and social channels, then
+   `Slack.GetThread` with `after` `<start>` for new replies from other people.
+   This is the only source that finds agents (such as Claude in Slack) asking
+   River for something, because they don't @-mention her.
+4. **Her areas (discovery):** `river -from:@river after:<start date minus 2 days>`
+   (people talking about her or her project key without tagging her), plus at
+   most one topical query in her areas: platform, infra, security, auth,
+   agents/MCP, tool recommendation, deployments/on-prem, coding-agent tooling,
+   observability, ADRs/eng process, feature flags/org model. Classic search has
+   no OR, so pick the topic most active this week.
 
 ## Step 3: Decide what needs River
 
 For each candidate, **read the whole thread** (`Slack.GetThread`) and any
 truncated message in full (`Slack.GetMessage`). Drop it if River already
-answered, reacted to close it out, or someone else resolved it.
+answered or someone else resolved it. A reaction counts as River closing it
+out only in a DM: in channels, reactions don't say who reacted.
+
+For dedup and for `answer`, read the open RIV issues once per run
+(`Linear.ListIssues`, then `Linear.GetIssue` only for the few that look
+related). Don't file what an open issue already tracks, except a direct ask,
+which always gets its own issue; put the related issue in `refs`.
 
 What to file (calibrated by River):
 
 - **`ask`, always:** a direct ask of River in a DM or @-mention (a question,
   a review, a decision, "can you include me"). It gets its own "Reply to
   <name>: …" issue even if another agent's issue covers the underlying work.
-- **`answer`:** a reply River or an agent was waiting on, for a known RIV
-  issue (it's in that issue's Refs, or the thread names it). Relay it
+  An agent River commissioned (Claude in Slack, for example) asking her to
+  review, un-draft or decide something is an `ask` too.
+- **`answer`:** a reply River or an agent was waiting on, for an open RIV
+  issue (the thread is in that issue's Refs, or the thread names it). Relay it
   verbatim into that issue. Never file a new issue for it.
 - **`fyi` / `optional`, high bar:** a new public commitment made for River
   ("River will write this up"), or a technical finding in her areas that
