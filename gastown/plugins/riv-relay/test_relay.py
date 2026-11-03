@@ -77,8 +77,12 @@ class RelayTest(unittest.TestCase):
         self.gt_home = root / "gt"
         self.gt_home.mkdir()
         self.town = root / "town"
-        for name in ("gigi", "phagey"):
-            (self.town / "monorepo/crew" / name).mkdir(parents=True)
+        for address in (
+            "monorepo/crew/gigi",
+            "monorepo/crew/phagey",
+            "ml/crew/lovelace",
+        ):
+            (self.town / address).mkdir(parents=True)
         fake_gt = root / "gt-bin"
         fake_gt.write_text(FAKE_GT)
         fake_gt.chmod(0o755)
@@ -295,11 +299,23 @@ class Routing(RelayTest):
         mail = self.route_of("Looks good", labels=["agent:claude-slack-web"])
         self.assertEqual(mail["args"][2], "monorepo/crew/gigi")
 
-    def test_a_footer_naming_an_agent_outside_the_town_falls_through_to_the_default(self):
+    def test_a_footer_naming_an_agent_outside_the_town_falls_through_to_the_default(
+        self,
+    ):
         mail = self.route_of(
             "Looks good", description="Body\n\nAgent: monorepo/crew/nobody"
         )
         self.assertEqual(mail["args"][2], "monorepo/crew/gigi")
+
+    def test_a_label_routes_to_crew_in_another_rig(self):
+        mail = self.route_of("Looks good", labels=["agent:lovelace"])
+        self.assertEqual(mail["args"][2], "ml/crew/lovelace")
+
+    def test_a_footer_routes_to_crew_in_another_rig(self):
+        mail = self.route_of(
+            "Looks good", description="Body\n\nAgent: ml/crew/lovelace"
+        )
+        self.assertEqual(mail["args"][2], "ml/crew/lovelace")
 
     def test_an_email_address_is_not_a_mention(self):
         mail = self.route_of("cc ops@gigi.example", description=self.FOOTER)
