@@ -574,5 +574,70 @@ class FailuresAndRetries(ReviewInboxTest):
             self.inbox.command_apply("")
 
 
+class AbandonedRuns(ReviewInboxTest):
+    """A dog that dies after making its Linear calls never runs apply or fail."""
+
+    def abandon_a_create(self):
+        self.deliver_for_real()
+        self.github(pull())
+        self.assertTrue(self.inbox.command_check().startswith("CALLS"))
+
+    def reconcile_mails(self):
+        return [m for m in self.mails() if m["args"][2] == "monorepo/crew/phagey"]
+
+    def test_a_create_from_a_run_that_never_applied_is_held_not_repeated(self):
+        self.abandon_a_create()
+        self.run_once()
+        self.run_once()
+        self.assertEqual(self.tools(), [])
+        self.assertTrue(self.record()["unconfirmed_create"])
+        self.assertEqual(len(self.reconcile_mails()), 1)
+        self.assertIn(KEY, self.reconcile_mails()[0]["args"][4])
+
+    def test_adopt_records_the_issue_the_abandoned_run_created(self):
+        self.abandon_a_create()
+        self.run_once()
+        self.inbox.command_adopt(KEY, "RIV-40")
+        self.assertEqual(self.record()["riv"], "RIV-40")
+        self.assertNotIn("unconfirmed_create", self.record())
+        self.run_once()
+        self.assertEqual(self.tools(), [])
+
+    def test_retry_releases_the_hold_so_the_next_run_creates(self):
+        self.abandon_a_create()
+        self.run_once()
+        self.inbox.command_retry(KEY)
+        self.run_once()
+        self.assertEqual(self.tools(), ["Linear.CreateIssue"])
+
+    def test_a_create_that_apply_recorded_is_never_held(self):
+        self.deliver_for_real()
+        self.github(pull())
+        self.run_once()
+        # apply recorded the issue, then died before clearing its plan.
+        (self.home / "pending" / "plan.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "key": KEY,
+                        "event": "create",
+                        "calls": [{"step": "create", "id": "c1"}],
+                        "settled": {"key": KEY},
+                    }
+                ]
+            )
+        )
+        self.run_once()
+        self.assertEqual(self.record()["riv"], "RIV-12")
+        self.assertNotIn("unconfirmed_create", self.record())
+        self.assertEqual(self.tools(), ["Linear.CreateIssue"])
+
+    def test_a_reported_failure_is_not_mistaken_for_an_abandoned_run(self):
+        self.abandon_a_create()
+        self.inbox.command_fail("c1 Linear.CreateIssue: timeout")
+        self.run_once()
+        self.assertEqual(self.tools(), ["Linear.CreateIssue"])
+
+
 if __name__ == "__main__":
     unittest.main()

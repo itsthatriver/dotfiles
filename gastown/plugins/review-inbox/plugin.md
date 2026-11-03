@@ -131,3 +131,8 @@ Do not escalate on failure; `review_inbox.py` owns escalation.
 - **Failures:** a call that fails is retried next run, skipping calls that
   already succeeded. The 5th failed run in a row makes one `gt escalate`,
   fingerprint `review-inbox`.
+- **Dead runs:** if a run makes its calls and dies before Step 3, its creates
+  may exist in Linear unrecorded. The next run holds those PRs instead of
+  filing them again, and mails `monorepo/crew/phagey` once to run
+  `review_inbox.py adopt <pr> RIV-N` (the issue exists) or
+  `review_inbox.py retry <pr>` (it doesn't). Dogs never run these.

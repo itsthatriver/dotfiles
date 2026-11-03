@@ -15,6 +15,12 @@ dog makes the Linear calls this script prints and saves their results.
                                     any mails. A reason says which call failed.
     review_inbox.py fail <reason>   Records a failed run; escalates on the 5th
                                     in a row.
+    review_inbox.py adopt <pr> <RIV-N>  Records the issue a dead run created.
+    review_inbox.py retry <pr>      Releases a held create so the next run files it.
+
+A plan still on disk at check time means a run printed its calls and died
+before apply or fail, so its creates may already exist in Linear. Those PRs
+are held, not filed again, and RECONCILER is mailed once to adopt or retry.
 
 Delivery is off until the file DELIVER exists in the runtime directory; until
 then check appends every Linear call and mail it would make to dry-run.log,
@@ -53,6 +59,7 @@ RIVER_EMAIL = "river@arcade.dev"
 # riv-relay skips any Linear post containing "Δ Delta", so every post is signed.
 SIGNATURE = "~ Δ Delta, downstream of River"
 REVIEW_DISPATCHER = "monorepo/crew/gigi"
+RECONCILER = "monorepo/crew/phagey"
 LARGE_PR_LINES = 500
 HIGH_RISK_LABEL = "risk:high"
 RISK_LABEL = re.compile(r"^(risk:[\w-]+|review:human-only)$")
@@ -219,9 +226,13 @@ def is_created(record: dict | None) -> bool:
     return record["riv"] != DRY_RUN_ISSUE or is_dry_run()
 
 
+def is_held(record: dict | None) -> bool:
+    return bool(record and record.get("unconfirmed_create"))
+
+
 def needs_detail(record: dict | None, in_search: bool) -> bool:
     if not is_created(record):
-        return in_search
+        return in_search and not is_held(record)
     phase = record["phase"]
     if in_search:
         return phase != "requested"
@@ -235,7 +246,7 @@ def review_id(pr: dict) -> str | None:
 def next_event(record: dict | None, in_search: bool, pr: dict | None) -> str | None:
     """The one transition a PR makes this run, or None. pr is read when needs_detail."""
     if not is_created(record):
-        return "create" if in_search else None
+        return "create" if in_search and not is_held(record) else None
     phase = record["phase"]
     if in_search:
         if phase == "requested":
@@ -462,13 +473,81 @@ def planned_events(state: dict) -> list[dict]:
     return events
 
 
+def hold_abandoned_creates(state: dict) -> None:
+    """Hold the creates of a run that printed its calls and never applied or failed."""
+    if not PLAN_FILE.exists():
+        return
+    for item in json.loads(PLAN_FILE.read_text()):
+        recorded = is_created(state["prs"].get(item["key"]))
+        if not recorded and any(call["step"] == "create" for call in item["calls"]):
+            record = dict(item["settled"])
+            record.update(unconfirmed_create=True, reconcile_mail="pending")
+            state["prs"][item["key"]] = record
+    PLAN_FILE.unlink()
+    save_state(state)
+
+
+def send_reconcile_mails(state: dict) -> None:
+    for key, record in state["prs"].items():
+        if record.get("reconcile_mail") != "pending":
+            continue
+        send_mail(
+            {
+                "to": RECONCILER,
+                "subject": f"review-inbox: check RIV for an unrecorded issue for {key}",
+                "body": "\n".join(
+                    [
+                        f"A review-inbox run printed the Linear create for {key}",
+                        f"({record.get('title', '')}) and died before apply, so the issue",
+                        "may exist in RIV without being recorded. The PR is held until you:",
+                        f"  python3 ~/gt/plugins/review-inbox/review_inbox.py adopt {key} RIV-N",
+                        f"  python3 ~/gt/plugins/review-inbox/review_inbox.py retry {key}",
+                        "Adopt if the issue exists (close any duplicates); retry if it doesn't.",
+                    ]
+                ),
+            }
+        )
+        record["reconcile_mail"] = "sent"
+        save_state(state)
+
+
+def held_record(state: dict, key: str) -> dict:
+    record = state["prs"].get(key)
+    if not is_held(record):
+        raise ReviewInboxError(f"{key} has no held create")
+    return record
+
+
+def command_adopt(key: str, riv: str) -> str:
+    if not re.match(r"^RIV-\d+$", riv):
+        raise ReviewInboxError(f"not a RIV identifier: {riv}")
+    state = load_state()
+    record = held_record(state, key)
+    for field in ("unconfirmed_create", "reconcile_mail"):
+        record.pop(field, None)
+    record["riv"] = riv
+    save_state(state)
+    return f"review-inbox: {key} recorded as {riv}"
+
+
+def command_retry(key: str) -> str:
+    state = load_state()
+    held_record(state, key)
+    del state["prs"][key]
+    save_state(state)
+    return f"review-inbox: {key} released; the next run files it"
+
+
 def command_check() -> str:
     state = load_state()
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    hold_abandoned_creates(state)
     # Results left by a failed run must never stand in for this run's calls.
     for leftover in PENDING_DIR.glob("*.json"):
         leftover.unlink()
     mails = 0 if is_dry_run() else send_pending_mails(state)
+    if not is_dry_run():
+        send_reconcile_mails(state)
     events = planned_events(state)
 
     if is_dry_run():
@@ -594,6 +673,8 @@ def command_apply(reason: str) -> str:
 
 
 def command_fail(reason: str) -> str:
+    # A reported failure is not an abandoned run; its plan must not be held.
+    PLAN_FILE.unlink(missing_ok=True)
     state = load_state()
     state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
     save_state(state)
@@ -617,6 +698,10 @@ def main(argv: list[str]) -> int:
                 print(command_apply(reason))
             elif command == "fail":
                 print(command_fail(reason or "unspecified"))
+            elif command == "adopt" and len(argv) == 4:
+                print(command_adopt(argv[2], argv[3]))
+            elif command == "retry" and len(argv) == 3:
+                print(command_retry(argv[2]))
             else:
                 print(__doc__, file=sys.stderr)
                 return 2
