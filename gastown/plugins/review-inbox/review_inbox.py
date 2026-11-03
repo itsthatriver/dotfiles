@@ -7,7 +7,8 @@ escalate. Only an LLM session can call the Arcade gateway, so the review-inbox
 dog makes the Linear calls this script prints and saves their results.
 
     review_inbox.py check           Reads GitHub and diffs it against state.
-                                    Prints NOTHING_CHANGED, DONE <summary>, or
+                                    Prints BUSY if another run has calls out,
+                                    otherwise NOTHING_CHANGED, DONE <summary>, or
                                     CALLS <n> then one "CALL <id> <json>" line
                                     per Linear call for the dog to make.
     review_inbox.py apply [reason]  Reads pending/<id>.json for each call the
@@ -35,7 +36,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 RUNTIME_DIR = Path(
@@ -47,6 +48,7 @@ PLAN_FILE = PENDING_DIR / "plan.json"
 DRY_RUN_LOG = RUNTIME_DIR / "dry-run.log"
 DELIVER_FLAG = RUNTIME_DIR / "DELIVER"
 LOCK_FILE = RUNTIME_DIR / "review-inbox.lock"
+RUN_LEASE = RUNTIME_DIR / "run.lease"
 GH = os.environ.get("REVIEW_INBOX_GH", "gh")
 GT = os.environ.get("REVIEW_INBOX_GT", "gt")
 
@@ -64,6 +66,9 @@ LARGE_PR_LINES = 500
 HIGH_RISK_LABEL = "risk:high"
 RISK_LABEL = re.compile(r"^(risk:[\w-]+|review:human-only)$")
 ESCALATE_AFTER_FAILURES = 5
+# Twice the dog's 5m timeout: a run with calls out holds this, and a check that
+# finds a live lease answers BUSY instead of replanning the same creates.
+RUN_LEASE_TTL = timedelta(minutes=10)
 DRY_RUN_ISSUE = "dry-run"
 
 PR_QUERY = """
@@ -538,7 +543,21 @@ def command_retry(key: str) -> str:
     return f"review-inbox: {key} released; the next run files it"
 
 
+def run_in_progress() -> bool:
+    if not RUN_LEASE.exists():
+        return False
+    age = datetime.now(timezone.utc).timestamp() - RUN_LEASE.stat().st_mtime
+    return age < RUN_LEASE_TTL.total_seconds()
+
+
+def release_run() -> None:
+    RUN_LEASE.unlink(missing_ok=True)
+
+
 def command_check() -> str:
+    if run_in_progress():
+        return "BUSY"
+    release_run()
     state = load_state()
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
     hold_abandoned_creates(state)
@@ -593,6 +612,7 @@ def command_check() -> str:
             payload = {"tool_name": call["tool_name"], "inputs": call["inputs"]}
             lines.append(f"CALL {call['id']} {json.dumps(payload, ensure_ascii=False)}")
     PLAN_FILE.write_text(json.dumps(calling, indent=2, ensure_ascii=False) + "\n")
+    RUN_LEASE.write_text(now() + "\n")
     return "\n".join([f"CALLS {counter}", *lines])
 
 
@@ -657,6 +677,7 @@ def command_apply(reason: str) -> str:
         raise ReviewInboxError("apply ran without a plan; run check first")
     state = load_state()
     plan = json.loads(PLAN_FILE.read_text())
+    release_run()
     problems = [p for p in (apply_event(state, item) for item in plan) if p]
     mails = send_pending_mails(state)
     for leftover in PENDING_DIR.glob("*.json"):
@@ -675,6 +696,7 @@ def command_apply(reason: str) -> str:
 def command_fail(reason: str) -> str:
     # A reported failure is not an abandoned run; its plan must not be held.
     PLAN_FILE.unlink(missing_ok=True)
+    release_run()
     state = load_state()
     state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
     save_state(state)

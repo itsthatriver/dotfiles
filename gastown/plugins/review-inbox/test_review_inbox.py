@@ -581,6 +581,10 @@ class AbandonedRuns(ReviewInboxTest):
         self.deliver_for_real()
         self.github(pull())
         self.assertTrue(self.inbox.command_check().startswith("CALLS"))
+        # The dog died: its lease runs out without apply or fail.
+        lease = self.home / "run.lease"
+        stale = lease.stat().st_mtime - 3600
+        os.utime(lease, (stale, stale))
 
     def reconcile_mails(self):
         return [m for m in self.mails() if m["args"][2] == "monorepo/crew/phagey"]
@@ -637,6 +641,42 @@ class AbandonedRuns(ReviewInboxTest):
         self.inbox.command_fail("c1 Linear.CreateIssue: timeout")
         self.run_once()
         self.assertEqual(self.tools(), ["Linear.CreateIssue"])
+
+
+class OneRunAtATime(ReviewInboxTest):
+    """Overlapping dogs once wiped each other's results and filed PRs twice."""
+
+    def start_a_run(self):
+        self.deliver_for_real()
+        self.github(pull())
+        self.assertTrue(self.inbox.command_check().startswith("CALLS"))
+
+    def test_a_check_while_a_run_has_calls_out_is_busy_and_keeps_its_plan(self):
+        self.start_a_run()
+        self.assertEqual(self.inbox.command_check(), "BUSY")
+        self.assertTrue((self.home / "pending" / "plan.json").exists())
+
+    def test_apply_ends_the_run(self):
+        self.start_a_run()
+        (self.home / "pending" / "c1.json").write_text(
+            json.dumps({"issue": {"identifier": "RIV-12"}, "created": True})
+        )
+        self.inbox.command_apply("")
+        self.assertNotEqual(self.inbox.command_check(), "BUSY")
+
+    def test_fail_ends_the_run(self):
+        self.start_a_run()
+        self.inbox.command_fail("c1 Linear.CreateIssue: timeout")
+        self.assertNotEqual(self.inbox.command_check(), "BUSY")
+
+    def test_a_run_older_than_the_lease_is_treated_as_dead(self):
+        self.start_a_run()
+        lease = self.home / "run.lease"
+        stale = lease.stat().st_mtime - 3600
+        os.utime(lease, (stale, stale))
+        self.run_once()
+        self.assertEqual(self.tools(), [])
+        self.assertTrue(self.record()["unconfirmed_create"])
 
 
 if __name__ == "__main__":

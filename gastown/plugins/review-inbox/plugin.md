@@ -50,6 +50,9 @@ Linear calls at all. Do not create or remove that file.
 python3 ~/gt/plugins/review-inbox/review_inbox.py check
 ```
 
+- `BUSY`: another dog's run still has its calls out. Go to Record Result with
+  `result:success` and "skipped: another run in progress". Make NO calls and
+  do not run `apply` or `fail`. You are done.
 - `NOTHING_CHANGED`: go to Record Result with `result:success`. You are done.
 - `DONE <summary>`: go to Record Result with `result:success` and the summary.
   You are done.
