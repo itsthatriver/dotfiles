@@ -139,7 +139,10 @@ Do not escalate on failure; `relay.py` owns escalation.
 
 Routing, first match wins: `@phagey` / `@gigi` in the comment, then a label
 `agent:<name>`, then an `Agent: monorepo/crew/<name>` line in the description,
-then `monorepo/crew/gigi`. A `Bead: mo-…` line in the description is copied
+then `monorepo/crew/gigi`. A label or footer naming an agent that isn't in the
+town (no `~/gt/monorepo/crew/<name>` directory, for example
+`agent:claude-slack-web`) is skipped, so routing falls through to the next
+rule instead of failing the send. A `Bead: mo-…` line in the description is copied
 into the mail. Follow-ups on the same issue reply to its first mail.
 
 State lives in `~/gt/.runtime/riv-relay/state.json` and is written only after
