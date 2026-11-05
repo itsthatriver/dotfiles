@@ -5,7 +5,7 @@ fishy_collapsed_wd() {
 
 # Called by Starship to set window/tab title
 function set_win_title() {
-  echo -ne "\033]0;$(fishy_collapsed_wd) $USER@${HOST%*.*}\007"
+  echo -ne "\033]0;$(fishy_collapsed_wd) river@${HOST%*.*}\007"
 }
 precmd_functions+=(set_win_title)
 
