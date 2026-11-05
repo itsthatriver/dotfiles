@@ -50,6 +50,9 @@ Linear calls at all. Do not create or remove that file.
 python3 ~/gt/plugins/review-inbox/review_inbox.py check
 ```
 
+- `BUSY`: another dog's run still has its calls out. Go to Record Result with
+  `result:success` and "skipped: another run in progress". Make NO calls and
+  do not run `apply` or `fail`. You are done.
 - `NOTHING_CHANGED`: go to Record Result with `result:success`. You are done.
 - `DONE <summary>`: go to Record Result with `result:success` and the summary.
   You are done.
@@ -131,3 +134,8 @@ Do not escalate on failure; `review_inbox.py` owns escalation.
 - **Failures:** a call that fails is retried next run, skipping calls that
   already succeeded. The 5th failed run in a row makes one `gt escalate`,
   fingerprint `review-inbox`.
+- **Dead runs:** if a run makes its calls and dies before Step 3, its creates
+  may exist in Linear unrecorded. The next run holds those PRs instead of
+  filing them again, and mails `monorepo/crew/phagey` once to run
+  `review_inbox.py adopt <pr> RIV-N` (the issue exists) or
+  `review_inbox.py retry <pr>` (it doesn't). Dogs never run these.
