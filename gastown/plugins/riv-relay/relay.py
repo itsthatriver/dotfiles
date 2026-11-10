@@ -38,6 +38,9 @@ DRY_RUN_LOG = RUNTIME_DIR / "dry-run.log"
 DELIVER_FLAG = RUNTIME_DIR / "DELIVER"
 LOCK_FILE = RUNTIME_DIR / "relay.lock"
 GT = os.environ.get("RIV_RELAY_GT", "gt")
+# The Gas Town root. A recipient is deliverable only if its agent directory
+# exists here; labels can name agents outside the town, such as a Slack bot.
+TOWN = Path(os.environ.get("RIV_RELAY_TOWN", Path.home() / "gt"))
 
 # Agents post to Linear as River's user, so authorship can't separate them from
 # River. Every agent post is signed; Linear stores the leading "~" escaped.
@@ -55,7 +58,7 @@ EPOCH = "1970-01-01T00:00:00.000Z"
 
 MENTION = re.compile(r"(?<![\w@])@(" + "|".join(KNOWN_CREW) + r")\b", re.IGNORECASE)
 AGENT_LABEL = re.compile(r"^agent:([\w-]+)$")
-AGENT_FOOTER = re.compile(r"^\s*Agent:\s*`?(monorepo/crew/[\w-]+)`?\s*$", re.MULTILINE)
+AGENT_FOOTER = re.compile(r"^\s*Agent:\s*`?([\w-]+/crew/[\w-]+)`?\s*$", re.MULTILINE)
 BEAD_FOOTER = re.compile(r"^\s*Bead:\s*`?(mo-[\w.-]+)`?", re.MULTILINE)
 CHECKBOX = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.*?)\s*$")
 
@@ -160,12 +163,27 @@ def route(issue: dict, comment_body: str | None) -> tuple[str, str]:
             return f"monorepo/crew/{name}", f"@{name} in the comment"
     for label in label_names(issue):
         match = AGENT_LABEL.match(label)
-        if match:
-            return f"monorepo/crew/{match.group(1)}", f"label {label}"
+        address = crew_address(match.group(1)) if match else None
+        if address:
+            return address, f"label {label}"
     footer = AGENT_FOOTER.search(issue.get("description") or "")
-    if footer:
+    if footer and is_town_agent(footer.group(1)):
         return footer.group(1), "Agent: footer in the description"
     return DEFAULT_RECIPIENT, "default recipient"
+
+
+def crew_address(name: str) -> str | None:
+    """The crew member's address in whichever rig has them, monorepo first."""
+    if is_town_agent(f"monorepo/crew/{name}"):
+        return f"monorepo/crew/{name}"
+    others = sorted(TOWN.glob(f"*/crew/{name}"))
+    return str(others[0].relative_to(TOWN)) if others else None
+
+
+def is_town_agent(address: str) -> bool:
+    """True when gt mail can deliver to the address. An unknown recipient fails
+    the send, and one failed send stalls the whole relay."""
+    return (TOWN / address).is_dir()
 
 
 def one_line(text: str, limit: int = 60) -> str:
