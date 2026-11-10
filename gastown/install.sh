@@ -38,3 +38,4 @@ link_plugin() {
 
 link_plugin riv-relay plugin.md relay.py
 link_plugin review-inbox plugin.md review_inbox.py
+link_plugin slack-triage plugin.md slack_triage.py
