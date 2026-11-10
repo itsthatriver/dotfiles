@@ -66,7 +66,13 @@ LISTING
 ```
 
 - `NOTHING_CHANGED`: go to Record Result with `result:success`. You are done.
+- `BUSY`: another dog's run is still in progress. Go to Record Result with
+  `result:success` and the note "skipped: another run in progress". Do NOT
+  fetch, write snapshots, or run `relay`/`fail`. You are done.
 - `FETCH RIV-3 RIV-5 ...`: go to Step 3 with exactly those identifiers.
+  The list holds at most 6 issues (`RIV_RELAY_MAX_FETCH`), oldest change first.
+  Fetch only those; any others wait for the next run, and the relay holds its
+  cursor until the backlog is drained. Never fetch more than you were given.
 - Exit code not 0: `relay.py` already counted the failure. Go to Record Result
   with `result:failure`.
 
