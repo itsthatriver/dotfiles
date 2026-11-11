@@ -240,6 +240,14 @@ def example():
 
 Never use bare triple-backtick fences. This enables syntax highlighting and tooling integration.
 
+## Rules of Engagement
+
+When acting on work items (issues, PRs, review threads, beads), follow the rules of
+engagement: acknowledge where the ask was made, report state changes there, never skip
+silently, and own the outcome ("I Got It").
+
+@rules-of-engagement.md
+
 ---
 
 <!-- Local additions (machine-specific, gitignored) -->
