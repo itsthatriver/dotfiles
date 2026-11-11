@@ -5,18 +5,15 @@ These apply to every agent, and every person, acting on River's work items: Line
 
 ## I Got It
 
-It doesn't matter who does the work. What matters is that the outcome is understood and
-owned. Whoever is responsible for an outcome drives it to completion, by doing the work or
-by working with others, and communicates proactively so nobody has to ask for an update.
+Whoever is responsible for an outcome owns it until it's done. They drive it to
+completion, either by doing the work or by delegating it and following through, and they
+communicate proactively so nobody has to ask for an update. Delegating work never
+delegates the outcome: agents can stop without noticing, by crashing, getting stuck at a
+prompt or hitting a context limit, so whoever hands work out stays accountable for it
+until it's finished.
 
 If someone looking at a ticket has to wonder "is anyone on this?" or "has the automation
 broken?", we've failed, even if the work is going fine.
-
-**Where agents differ from people:** an agent can stop, by crashing, getting stuck at a
-prompt or hitting a context limit, without noticing and without telling anyone. So "it
-doesn't matter who does the work" applies to doing the work, not to accountability.
-Delegating work never delegates the outcome. The manager who handed it out stays
-accountable until it's done.
 
 ## The rules
 
@@ -34,10 +31,9 @@ accountable until it's done.
    to it.
 4. **Make calls to action answerable in one line.** Offer the options, recommend a default,
    and give the exact reply that picks one, e.g. "`split it out` or `keep it`".
-5. **Ownership is explicit, and accountability stays with the delegator.** Whoever picks an
-   item up owns the outcome. If they delegate the work to a polecat, a crew agent or a dog,
-   the delegate owns doing it, but the delegator still owns the outcome. State every
-   handoff on the item. When a new session takes over, it acknowledges on the item again
+5. **Ownership is explicit.** The owner of an item owns its outcome until it's done or
+   handed off on the item itself. Delegating the work doesn't hand off the outcome (see
+   rule 8). When a new session takes an item over, it acknowledges on the item again
    before carrying on.
 6. **Close the loop with evidence.** When it's finished, say so where the ask was made,
    with a SHA, a link or the result. Then resolve the thread or issue if it's yours to
