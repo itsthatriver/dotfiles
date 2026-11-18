@@ -342,6 +342,38 @@ class Routing(RelayTest):
         )
         self.assertEqual(mail["args"][2], "ml/crew/lovelace")
 
+    def add_crew(self, *addresses):
+        for address in addresses:
+            (self.town / address).mkdir(parents=True)
+
+    def test_a_label_for_crew_in_several_rigs_falls_through_to_the_footer(self):
+        # marsha has a workspace in both rigs; the label alone can't say which.
+        self.add_crew("blog/crew/marsha", "dotfiles/crew/marsha")
+        mail = self.route_of(
+            "Looks good",
+            labels=["agent:marsha"],
+            description="Body\n\nAgent: dotfiles/crew/marsha",
+        )
+        self.assertEqual(mail["args"][2], "dotfiles/crew/marsha")
+
+    def test_a_label_for_crew_in_several_rigs_without_a_footer_goes_to_the_default(
+        self,
+    ):
+        self.add_crew("blog/crew/marsha", "dotfiles/crew/marsha")
+        mail = self.route_of("Looks good", labels=["agent:marsha"])
+        self.assertEqual(mail["args"][2], "monorepo/crew/gigi")
+
+    def test_a_mention_routes_to_crew_in_another_rig(self):
+        (self.town / "monorepo/crew/gigi").rmdir()
+        self.add_crew("gs/crew/gigi")
+        mail = self.route_of("@gigi please take this", description=self.FOOTER)
+        self.assertEqual(mail["args"][2], "gs/crew/gigi")
+
+    def test_a_mention_of_crew_outside_the_town_falls_through_to_the_footer(self):
+        (self.town / "monorepo/crew/gigi").rmdir()
+        mail = self.route_of("@gigi please take this", description=self.FOOTER)
+        self.assertEqual(mail["args"][2], "monorepo/crew/phagey")
+
     def test_an_email_address_is_not_a_mention(self):
         mail = self.route_of("cc ops@gigi.example", description=self.FOOTER)
         self.assertEqual(mail["args"][2], "monorepo/crew/phagey")
