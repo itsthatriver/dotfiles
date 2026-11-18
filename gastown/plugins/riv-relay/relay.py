@@ -185,9 +185,10 @@ def route(issue: dict, comment_body: str | None) -> tuple[str, str]:
     """Pick the recipient, first match wins. Returns (address, reason)."""
     if comment_body:
         mention = MENTION.search(comment_body)
-        if mention:
-            name = mention.group(1).lower()
-            return f"monorepo/crew/{name}", f"@{name} in the comment"
+        name = mention.group(1).lower() if mention else None
+        address = crew_address(name) if name else None
+        if address:
+            return address, f"@{name} in the comment"
     for label in label_names(issue):
         match = AGENT_LABEL.match(label)
         address = crew_address(match.group(1)) if match else None
@@ -200,11 +201,13 @@ def route(issue: dict, comment_body: str | None) -> tuple[str, str]:
 
 
 def crew_address(name: str) -> str | None:
-    """The crew member's address in whichever rig has them, monorepo first."""
+    """The crew member's address: monorepo if they're there, else the one rig
+    that has them. None when no rig has them, or when several do, because the
+    name alone can't say which; the footer or the default decides then."""
     if is_town_agent(f"monorepo/crew/{name}"):
         return f"monorepo/crew/{name}"
     others = sorted(TOWN.glob(f"*/crew/{name}"))
-    return str(others[0].relative_to(TOWN)) if others else None
+    return str(others[0].relative_to(TOWN)) if len(others) == 1 else None
 
 
 def is_town_agent(address: str) -> bool:
