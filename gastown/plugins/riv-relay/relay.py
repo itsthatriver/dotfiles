@@ -230,7 +230,8 @@ def build_mail(issue: dict, event: dict) -> dict:
 
     if kind in ("comment", "edit"):
         verb = "commented" if kind == "comment" else "edited a comment"
-        late = lateness(comment["created_at"])
+        # Only a new comment's lateness is knowable; Linear gives no edit time.
+        late = lateness(comment["created_at"]) if kind == "comment" else None
         marker = f" ({late} late)" if late else ""
         subject = f"[{ident}] River {verb}{marker}: {one_line(comment['body'])}"
         lead = [f"River {verb} on {ident}: {issue['title']}"]

@@ -666,10 +666,6 @@ class DeliveryAndFailures(RelayTest):
         self.assertEqual(self.state()["consecutive_failures"], 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LateRelays(RelayTest):
     """Relays held up by an outage say so, so nobody acts on stale asks as if new."""
 
@@ -704,6 +700,23 @@ class LateRelays(RelayTest):
             ["[RIV-9] River commented (4d late): Go ahead and sling it"],
         )
 
+    def test_an_edit_of_an_old_comment_is_not_marked_late(self):
+        # Linear gives no edit time, so lateness from created_at would misread a fresh edit.
+        self.relay_comment_written_at("2026-10-21T10:59:00.000Z")
+        self.set_clock("2026-10-25T11:00:00.000Z")
+        self.run_once(
+            issue(
+                updated_at="2026-10-25T10:59:00.000Z",
+                comments=[
+                    comment("c1", "Actually, hold off", "2026-10-21T10:59:00.000Z")
+                ],
+            )
+        )
+        self.assertEqual(
+            self.subjects()[-1], "[RIV-9] River edited a comment: Actually, hold off"
+        )
+        self.assertNotIn("Late:", self.mails()[-1]["stdin"])
+
     def test_a_comment_relayed_within_the_hour_is_not_marked(self):
         self.set_clock("2026-10-21T11:58:59.000Z")
         self.relay_comment_written_at("2026-10-21T10:59:00.000Z")
@@ -711,3 +724,7 @@ class LateRelays(RelayTest):
             self.subjects(), ["[RIV-9] River commented: Go ahead and sling it"]
         )
         self.assertNotIn("Late:", self.mails()[0]["stdin"])
+
+
+if __name__ == "__main__":
+    unittest.main()
