@@ -61,6 +61,10 @@ CURSOR_OVERLAP = timedelta(minutes=5)
 # Two runs of the 5-minute gate: an agent's signed comment this close before a
 # move to Done or Canceled marks the move as the agent's.
 AGENT_CLOSE_WINDOW = timedelta(minutes=10)
+# A relay this long after River wrote is flagged, because outages (spend caps,
+# expired auth, failed snapshots) can hold comments back for days and a stale
+# "go" acted on as if new would redo work.
+LATE_AFTER = timedelta(hours=1)
 ESCALATE_AFTER_FAILURES = 5
 # Longer than any run takes; a lease this old belongs to a run that died.
 RUN_LEASE_TTL = timedelta(minutes=20)
@@ -83,6 +87,19 @@ def parse_time(stamp: str) -> datetime:
 
 def format_time(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def lateness(created_at: str) -> str | None:
+    """How late a relay is, like "25h" or "4d", or None if it's within LATE_AFTER."""
+    delay = now() - parse_time(created_at)
+    if delay < LATE_AFTER:
+        return None
+    hours = int(delay.total_seconds() // 3600)
+    return f"{hours // 24}d" if hours >= 48 else f"{hours}h"
 
 
 def digest(text: str) -> str:
@@ -213,13 +230,22 @@ def build_mail(issue: dict, event: dict) -> dict:
 
     if kind in ("comment", "edit"):
         verb = "commented" if kind == "comment" else "edited a comment"
-        subject = f"[{ident}] River {verb}: {one_line(comment['body'])}"
-        lead = [
-            f"River {verb} on {ident}: {issue['title']}",
-            comment_url(issue, comment["id"]),
-            "",
-            comment["body"],
-        ]
+        # Only a new comment's lateness is knowable; Linear gives no edit time.
+        late = lateness(comment["created_at"]) if kind == "comment" else None
+        marker = f" ({late} late)" if late else ""
+        subject = f"[{ident}] River {verb}{marker}: {one_line(comment['body'])}"
+        lead = [f"River {verb} on {ident}: {issue['title']}"]
+        if late:
+            lead.append(
+                f"Late: River wrote this at {comment['created_at']}, {late} before this relay. "
+                "It may already be handled; check the issue before acting."
+            )
+        if kind == "edit":
+            lead.append(
+                "Linear gives no edit time, so this means the comment text differs from "
+                "the relay's last read; check the comment on Linear before acting."
+            )
+        lead += [comment_url(issue, comment["id"]), "", comment["body"]]
     elif kind == "checkboxes":
         subject = f"[{ident}] River ticked boxes: {len(event['flips'])} changed"
         lead = [
