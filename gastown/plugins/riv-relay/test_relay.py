@@ -9,6 +9,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -97,6 +98,12 @@ class RelayTest(unittest.TestCase):
         import relay
 
         self.relay = importlib.reload(relay)
+        # Before most fixture comments, so they read as fresh unless a test moves the clock.
+        self.set_clock("2026-10-21T10:00:00.000Z")
+
+    def set_clock(self, stamp):
+        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        self.relay.now = lambda: moment
 
     def tearDown(self):
         sys.path.remove(str(HERE))
@@ -187,6 +194,24 @@ class SignatureAndEdits(RelayTest):
                 "[RIV-9] River edited a comment: Use option B",
             ],
         )
+
+    def test_an_edit_says_linear_gives_no_edit_time(self):
+        self.baseline(issue())
+        self.run_once(
+            issue(
+                updated_at="2026-10-21T11:00:00.000Z",
+                comments=[comment("c1", "Use option A", "2026-10-21T10:59:00.000Z")],
+            )
+        )
+        self.run_once(
+            issue(
+                updated_at="2026-10-21T11:05:00.000Z",
+                comments=[comment("c1", "Use option B", "2026-10-21T10:59:00.000Z")],
+            )
+        )
+        edit_body = self.mails()[1]["stdin"]
+        self.assertIn("Linear gives no edit time", edit_body)
+        self.assertIn("check the comment on Linear before acting", edit_body)
 
     def test_subject_carries_the_first_60_characters_on_one_line(self):
         self.baseline(issue())
@@ -453,6 +478,8 @@ class CursorAndChecks(RelayTest):
         )
 
     def test_issues_read_in_the_same_run_share_one_cursor(self):
+        # Relayed promptly, so not marked late; LateRelays covers lateness.
+        self.set_clock("2026-10-19T11:30:00.000Z")
         newest_first = [
             issue(ident="RIV-3", updated_at="2026-10-21T12:00:00.000Z"),
             issue(
@@ -557,6 +584,8 @@ class RunLease(RelayTest):
 
 class DeliveryAndFailures(RelayTest):
     def test_dry_run_logs_instead_of_sending_and_replays_history(self):
+        # Relayed promptly, so not marked late; LateRelays covers lateness.
+        self.set_clock("2026-10-01T00:30:00.000Z")
         self.run_once(
             issue(comments=[comment("c1", "Old news", "2026-10-01T00:00:00.000Z")])
         )
@@ -639,3 +668,46 @@ class DeliveryAndFailures(RelayTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LateRelays(RelayTest):
+    """Relays held up by an outage say so, so nobody acts on stale asks as if new."""
+
+    def relay_comment_written_at(self, created_at):
+        self.baseline(issue())
+        self.run_once(
+            issue(
+                updated_at="2026-10-21T11:00:00.000Z",
+                comments=[comment("c1", "Go ahead and sling it", created_at)],
+            )
+        )
+
+    def test_a_comment_relayed_hours_late_is_marked_late(self):
+        self.set_clock("2026-10-22T12:00:00.000Z")
+        self.relay_comment_written_at("2026-10-21T10:59:00.000Z")
+        self.assertEqual(
+            self.subjects(),
+            ["[RIV-9] River commented (25h late): Go ahead and sling it"],
+        )
+        body = self.mails()[0]["stdin"]
+        self.assertIn(
+            "Late: River wrote this at 2026-10-21T10:59:00.000Z, 25h before this relay.",
+            body,
+        )
+        self.assertIn("It may already be handled", body)
+
+    def test_a_relay_days_late_counts_days(self):
+        self.set_clock("2026-10-25T11:00:00.000Z")
+        self.relay_comment_written_at("2026-10-21T10:59:00.000Z")
+        self.assertEqual(
+            self.subjects(),
+            ["[RIV-9] River commented (4d late): Go ahead and sling it"],
+        )
+
+    def test_a_comment_relayed_within_the_hour_is_not_marked(self):
+        self.set_clock("2026-10-21T11:58:59.000Z")
+        self.relay_comment_written_at("2026-10-21T10:59:00.000Z")
+        self.assertEqual(
+            self.subjects(), ["[RIV-9] River commented: Go ahead and sling it"]
+        )
+        self.assertNotIn("Late:", self.mails()[0]["stdin"])
