@@ -469,7 +469,8 @@ def sweep() -> str:
     found = [item for item in found if item["key"] not in state["seen"]]
 
     failures = state["consecutive_failures"] + 1 if github_problems else 0
-    if failures == FAIL_MAIL_AT:
+    notify_failure = needs_failure_mail(state, failures)
+    if notify_failure:
         found.append(
             failure_item(f"GitHub read failing: {'; '.join(github_problems)}", failures)
         )
@@ -479,6 +480,9 @@ def sweep() -> str:
         deliver(f"phagey-sweep: {len(items)} items", digest(items, cursor))
 
     state["consecutive_failures"] = failures
+    state["failure_mailed"] = failures > 0 and (
+        notify_failure or state.get("failure_mailed", False)
+    )
     state["health_reported"] = health_reported
     for item in found:
         state["seen"][item["key"]] = item["created_at"]
@@ -493,6 +497,16 @@ def sweep() -> str:
         return "phagey-sweep: nothing to report"
     mode = "logged to dry-run.log" if is_dry_run() else "sent"
     return f"phagey-sweep: {len(items)} item(s) {mode}"
+
+
+def needs_failure_mail(state: dict, failures: int) -> bool:
+    """Mail once per failure streak, from the FAIL_MAIL_AT-th failure on.
+
+    ">=" with a per-streak flag, not "== FAIL_MAIL_AT": the outage being
+    reported can take mail down too, and an equality check that loses its one
+    send would leave the rest of the streak silent.
+    """
+    return failures >= FAIL_MAIL_AT and not state.get("failure_mailed", False)
 
 
 def failure_item(reason: str, failures: int) -> dict:
@@ -513,12 +527,15 @@ def command_fail(reason: str) -> str:
     state["consecutive_failures"] += 1
     failures = state["consecutive_failures"]
     save_state(state)
-    if failures == FAIL_MAIL_AT:
+    if needs_failure_mail(state, failures):
         item = failure_item(reason, failures)
         deliver(
             f"phagey-sweep: failing, {failures} runs in a row",
             digest([item], state["cursor"]),
         )
+        # Recorded only after the send succeeds, so a failed send retries next run.
+        state["failure_mailed"] = True
+        save_state(state)
         return f"phagey-sweep: failure {failures} in a row, mailed phagey: {reason}"
     return f"phagey-sweep: failure {failures} in a row: {reason}"
 
