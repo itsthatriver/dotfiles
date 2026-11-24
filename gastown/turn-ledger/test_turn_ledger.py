@@ -650,7 +650,7 @@ class HookProcessTests(LedgerTestCase):
 
     def test_bad_arguments_still_exit_zero(self):
         process = self.start("--agent", "nonsense", stdin_text="{}")
-        _, stderr = process.communicate()
+        process.wait()
         self.assertEqual(process.returncode, 0)
         self.assertIn("nonsense", (self.home / "errors.log").read_text())
 
