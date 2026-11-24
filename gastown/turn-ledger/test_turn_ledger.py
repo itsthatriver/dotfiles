@@ -893,6 +893,235 @@ class CodexTests(unittest.TestCase):
         self.assertEqual(self.records()[0]["agent"], "codex")
 
 
+CLAUDE_COMMAND = f"python3 {SCRIPT} hook"
+CODEX_COMMAND = f"python3 {SCRIPT} hook --agent codex"
+
+EXISTING_HOOKS_BASE = {
+    "hooks": {
+        "SessionStart": [
+            {
+                "matcher": "",
+                "hooks": [{"type": "command", "command": "gt prime --hook"}],
+            }
+        ],
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [{"type": "command", "command": "gt costs record &"}],
+            }
+        ],
+        "UserPromptSubmit": [
+            {
+                "matcher": "",
+                "hooks": [{"type": "command", "command": "gt mail check --inject"}],
+            }
+        ],
+    }
+}
+EXISTING_CODEX_HOOKS = {
+    "hooks": {
+        "SessionStart": [
+            {"hooks": [{"type": "command", "command": "/opt/superset/hooks/notify.sh"}]}
+        ],
+        "Stop": [
+            {"hooks": [{"type": "command", "command": "/opt/superset/hooks/notify.sh"}]}
+        ],
+    }
+}
+
+
+class InstallTestCase(unittest.TestCase):
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+
+    def write_json(self, name, data):
+        path = self.root / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        return path
+
+    def commands(self, data, event):
+        return [
+            hook["command"]
+            for group in data["hooks"].get(event, [])
+            for hook in group["hooks"]
+        ]
+
+
+class InstallHooksTests(InstallTestCase):
+    def install(self, path):
+        return turn_ledger.install_hooks(path)
+
+    def test_adds_stop_start_and_end_entries_and_keeps_the_existing_ones(self):
+        path = self.write_json("hooks-base.json", EXISTING_HOOKS_BASE)
+        self.assertTrue(self.install(path))
+        data = json.loads(path.read_text())
+        self.assertEqual(
+            self.commands(data, "Stop"), ["gt costs record &", CLAUDE_COMMAND]
+        )
+        self.assertEqual(
+            self.commands(data, "SessionStart"), ["gt prime --hook", CLAUDE_COMMAND]
+        )
+        self.assertEqual(self.commands(data, "SessionEnd"), [CLAUDE_COMMAND])
+        self.assertEqual(
+            data["hooks"]["UserPromptSubmit"],
+            EXISTING_HOOKS_BASE["hooks"]["UserPromptSubmit"],
+        )
+        for event in ("Stop", "SessionStart"):
+            self.assertEqual(
+                data["hooks"][event][0], EXISTING_HOOKS_BASE["hooks"][event][0]
+            )
+
+    def test_the_stop_and_session_start_entries_are_async_and_session_end_is_not(self):
+        path = self.write_json("hooks-base.json", EXISTING_HOOKS_BASE)
+        self.install(path)
+        hooks = json.loads(path.read_text())["hooks"]
+        self.assertEqual(
+            hooks["Stop"][-1],
+            {
+                "matcher": "",
+                "hooks": [
+                    {"type": "command", "command": CLAUDE_COMMAND, "async": True}
+                ],
+            },
+        )
+        self.assertTrue(hooks["SessionStart"][-1]["hooks"][0]["async"])
+        self.assertNotIn("async", hooks["SessionEnd"][-1]["hooks"][0])
+
+    def test_writes_a_backup_of_the_original_first(self):
+        path = self.write_json("hooks-base.json", EXISTING_HOOKS_BASE)
+        original = path.read_text()
+        self.install(path)
+        self.assertEqual(Path(f"{path}.bak").read_text(), original)
+
+    def test_running_twice_changes_nothing_and_keeps_the_original_backup(self):
+        path = self.write_json("hooks-base.json", EXISTING_HOOKS_BASE)
+        original = path.read_text()
+        self.install(path)
+        installed = path.read_text()
+        self.assertFalse(self.install(path))
+        self.assertEqual(path.read_text(), installed)
+        self.assertEqual(Path(f"{path}.bak").read_text(), original)
+
+    def test_an_entry_installed_from_another_checkout_counts_as_present(self):
+        stale = "python3 /old/place/turn_ledger.py hook"
+        data = json.loads(json.dumps(EXISTING_HOOKS_BASE))
+        data["hooks"]["Stop"].append(
+            {"matcher": "", "hooks": [{"type": "command", "command": stale}]}
+        )
+        path = self.write_json("hooks-base.json", data)
+        self.install(path)
+        self.assertEqual(
+            self.commands(json.loads(path.read_text()), "Stop"),
+            ["gt costs record &", stale],
+        )
+
+    def test_creates_the_file_when_there_is_none(self):
+        path = self.root / "fresh.json"
+        self.assertTrue(self.install(path))
+        self.assertEqual(
+            self.commands(json.loads(path.read_text()), "Stop"), [CLAUDE_COMMAND]
+        )
+        self.assertFalse(Path(f"{path}.bak").exists())
+
+    def test_keeps_unrelated_top_level_keys(self):
+        data = {**EXISTING_HOOKS_BASE, "note": "keep me"}
+        path = self.write_json("hooks-base.json", data)
+        self.install(path)
+        self.assertEqual(json.loads(path.read_text())["note"], "keep me")
+
+    def test_refuses_a_file_it_cannot_parse_and_leaves_it_alone(self):
+        path = self.root / "broken.json"
+        path.write_text("{not json")
+        with self.assertRaises(ValueError):
+            self.install(path)
+        self.assertEqual(path.read_text(), "{not json")
+        self.assertFalse(Path(f"{path}.bak").exists())
+
+    def test_refuses_a_hooks_key_that_is_not_an_object(self):
+        path = self.write_json("odd.json", {"hooks": []})
+        with self.assertRaises(ValueError):
+            self.install(path)
+
+    def test_cli_installs_into_the_given_path(self):
+        path = self.write_json("hooks-base.json", EXISTING_HOOKS_BASE)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "install-hooks", str(path)],
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("installed", result.stdout)
+        self.assertIn(CLAUDE_COMMAND, path.read_text())
+
+    def test_cli_failure_is_loud_and_nonzero(self):
+        path = self.root / "broken.json"
+        path.write_text("{not json")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "install-hooks", str(path)],
+            text=True,
+            capture_output=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken.json", result.stderr)
+
+
+class InstallCodexHooksTests(InstallTestCase):
+    def install(self, path):
+        return turn_ledger.install_codex_hooks(path)
+
+    def test_adds_the_codex_entries_and_keeps_superset_notify(self):
+        path = self.write_json("hooks.json", EXISTING_CODEX_HOOKS)
+        self.assertTrue(self.install(path))
+        data = json.loads(path.read_text())
+        notify = "/opt/superset/hooks/notify.sh"
+        self.assertEqual(self.commands(data, "Stop"), [notify, CODEX_COMMAND])
+        self.assertEqual(self.commands(data, "SessionStart"), [notify, CODEX_COMMAND])
+        self.assertNotIn("SessionEnd", data["hooks"])
+        self.assertEqual(
+            data["hooks"]["Stop"][0], EXISTING_CODEX_HOOKS["hooks"]["Stop"][0]
+        )
+        self.assertEqual(
+            data["hooks"]["Stop"][-1],
+            {"hooks": [{"type": "command", "command": CODEX_COMMAND}]},
+        )
+
+    def test_backup_and_idempotence(self):
+        path = self.write_json("hooks.json", EXISTING_CODEX_HOOKS)
+        original = path.read_text()
+        self.install(path)
+        installed = path.read_text()
+        self.assertFalse(self.install(path))
+        self.assertEqual(path.read_text(), installed)
+        self.assertEqual(Path(f"{path}.bak").read_text(), original)
+
+    def test_a_claude_entry_does_not_count_as_a_codex_entry(self):
+        path = self.write_json("hooks.json", EXISTING_CODEX_HOOKS)
+        turn_ledger.install_hooks(path)
+        self.install(path)
+        stop = self.commands(json.loads(path.read_text()), "Stop")
+        self.assertEqual(stop[-2:], [CLAUDE_COMMAND, CODEX_COMMAND])
+
+    def test_cli_installs_into_the_given_path(self):
+        path = self.write_json("hooks.json", EXISTING_CODEX_HOOKS)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "install-codex-hooks", str(path)],
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(CODEX_COMMAND, path.read_text())
+
+    def test_cli_defaults_point_at_the_real_files_without_touching_them(self):
+        self.assertEqual(
+            turn_ledger.DEFAULT_HOOKS_BASE, Path.home() / ".gt/hooks-base.json"
+        )
+        self.assertEqual(
+            turn_ledger.DEFAULT_CODEX_HOOKS, Path.home() / ".codex/hooks.json"
+        )
+
+
 class IdentityTests(unittest.TestCase):
     def identify(self, relative):
         return turn_ledger.identify(str(Path.home() / "gt" / relative))

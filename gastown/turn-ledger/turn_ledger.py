@@ -823,6 +823,89 @@ def ingest_codex(home: Path, event: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Installing the hooks
+# ---------------------------------------------------------------------------
+
+DEFAULT_HOOKS_BASE = Path.home() / ".gt/hooks-base.json"
+DEFAULT_CODEX_HOOKS = Path.home() / ".codex/hooks.json"
+SCRIPT_PATH = Path(__file__).resolve()
+
+
+def claude_hook_entries() -> dict:
+    """Hook entries per event. Stop and SessionStart run async; SessionEnd must finish."""
+    command = f"python3 {SCRIPT_PATH} hook"
+    return {
+        "Stop": {"type": "command", "command": command, "async": True},
+        "SessionStart": {"type": "command", "command": command, "async": True},
+        "SessionEnd": {"type": "command", "command": command},
+    }
+
+
+def codex_hook_entries() -> dict:
+    command = f"python3 {SCRIPT_PATH} hook --agent codex"
+    return {
+        "Stop": {"type": "command", "command": command},
+        "SessionStart": {"type": "command", "command": command},
+    }
+
+
+def is_installed(groups: list, entry: dict) -> bool:
+    """True if a group already runs this entry, from any checkout of this script."""
+    tail = entry["command"].split("turn_ledger.py", 1)[1]
+    return any(
+        "turn_ledger.py" in hook.get("command", "")
+        and hook["command"].endswith("turn_ledger.py" + tail)
+        for group in groups
+        for hook in group.get("hooks", [])
+    )
+
+
+def merge_hooks(path: Path, entries: dict, matcher: str | None) -> bool:
+    """Add each entry to the hooks file at path, leaving everything else as it is.
+
+    Writes path.bak (a copy of the original) before the first change, and
+    changes nothing when every entry is already present. Returns whether the
+    file changed.
+    """
+    original = path.read_text() if path.exists() else None
+    try:
+        data = json.loads(original) if original is not None else {}
+    except ValueError as error:
+        raise ValueError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(data, dict) or not isinstance(data.setdefault("hooks", {}), dict):
+        raise ValueError(f"{path}: expected an object with a 'hooks' object")
+    changed = False
+    for event, entry in entries.items():
+        groups = data["hooks"].setdefault(event, [])
+        if is_installed(groups, entry):
+            continue
+        group = {"hooks": [entry]}
+        if matcher is not None:
+            group = {"matcher": matcher, **group}
+        groups.append(group)
+        changed = True
+    if not changed:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if original is not None:
+        Path(f"{path}.bak").write_text(original)
+    descriptor, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".hooks-")
+    with os.fdopen(descriptor, "w") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+    os.replace(temp_name, path)
+    return True
+
+
+def install_hooks(path: Path = DEFAULT_HOOKS_BASE) -> bool:
+    return merge_hooks(path, claude_hook_entries(), matcher="")
+
+
+def install_codex_hooks(path: Path = DEFAULT_CODEX_HOOKS) -> bool:
+    return merge_hooks(path, codex_hook_entries(), matcher=None)
+
+
+# ---------------------------------------------------------------------------
 # Hook entry point
 # ---------------------------------------------------------------------------
 
@@ -860,11 +943,37 @@ def hook_command(argv: list) -> int:
     return 0
 
 
+def install_command(argv: list) -> int:
+    parser = argparse.ArgumentParser(prog="turn_ledger.py")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name, default in (
+        ("install-hooks", DEFAULT_HOOKS_BASE),
+        ("install-codex-hooks", DEFAULT_CODEX_HOOKS),
+    ):
+        command = commands.add_parser(name)
+        command.add_argument("path", nargs="?", type=Path, default=default)
+    arguments = parser.parse_args(argv)
+    install = (
+        install_hooks if arguments.command == "install-hooks" else install_codex_hooks
+    )
+    try:
+        changed = install(arguments.path)
+    except (OSError, ValueError) as error:
+        print(f"turn-ledger: {arguments.command} failed: {error}", file=sys.stderr)
+        return 1
+    if changed:
+        print(
+            f"installed turn-ledger hooks in {arguments.path} (backup: {arguments.path}.bak)"
+        )
+    else:
+        print(f"turn-ledger hooks already installed in {arguments.path}")
+    return 0
+
+
 def main(argv: list) -> int:
     if argv[:1] == ["hook"]:
         return hook_command(argv[1:])
-    print(__doc__, file=sys.stderr)
-    return 2
+    return install_command(argv)
 
 
 if __name__ == "__main__":
