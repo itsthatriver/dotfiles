@@ -283,7 +283,7 @@ def classify_by_tools(
         goal = SIGNATURE_GOAL.get(sig)
         if goal and goal != "overhead":
             purposeful[goal] += tokens * GOAL_WEIGHT.get(goal, 1.0)
-    if purposeful:
+    if sum(purposeful.values()) > 0:
         goal, votes = purposeful.most_common(1)[0]
         return goal, votes / sum(purposeful.values())
     support: Counter[str] = Counter()
@@ -293,7 +293,7 @@ def classify_by_tools(
         )
         if goal:
             support[goal] += tokens
-    if support:
+    if sum(support.values()) > 0:
         goal, votes = support.most_common(1)[0]
         return goal, votes / sum(
             support.values()

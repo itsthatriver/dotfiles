@@ -75,6 +75,10 @@ class GoalClassifierTests(unittest.TestCase):
         result = self.classify("fix the thing", {"mail": 500, "ci_poll": 500})
         self.assertEqual(result[2], "low")
 
+    def test_tool_calls_that_cost_no_tokens_cannot_vote(self):
+        result = self.classify("fix the thing", {"edit_code": 0, "read": 0})
+        self.assertEqual(result, ("other", "T2_nothing", "low", ""))
+
     def test_nothing_to_go_on_is_other(self):
         result = self.classify("fix the thing")
         self.assertEqual(result, ("other", "T2_nothing", "low", ""))
@@ -109,10 +113,11 @@ def at(minute, second=0, hour=10):
 class Transcript:
     """Builds a Claude transcript fixture one record at a time."""
 
-    def __init__(self, path, session_id=SESSION, cwd=CREW_CWD):
+    def __init__(self, path, session_id=SESSION, cwd=CREW_CWD, sidechain=False):
         self.path = Path(path)
         self.session_id = session_id
         self.cwd = cwd
+        self.sidechain = sidechain
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch()
 
@@ -166,7 +171,7 @@ class Transcript:
         self.write(
             {
                 "type": "assistant",
-                "isSidechain": False,
+                "isSidechain": self.sidechain,
                 "requestId": "req_" + message_id,
                 "message": {
                     "id": message_id,
@@ -395,6 +400,182 @@ class TurnBoundaryTests(LedgerTestCase):
             [r["prompt_head"][:5] for r in self.records()], ["first", "again"]
         )
         self.assertIn("smaller than its cursor", (self.home / "errors.log").read_text())
+
+
+class ColdCallTests(LedgerTestCase):
+    def test_calls_more_than_five_minutes_after_the_previous_one_are_cold(self):
+        self.transcript.user("go", at(0))
+        self.transcript.assistant("msg_1", at(0, 5), stop_reason="tool_use")
+        self.transcript.assistant("msg_2", at(2, 0), stop_reason="tool_use")
+        self.transcript.assistant("msg_3", at(8, 0), stop_reason="tool_use")
+        self.transcript.assistant("msg_4", at(13, 1))
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["api_calls"], 4)
+        self.assertEqual(record["cold_calls"], 2)
+
+    def test_a_calls_gap_is_measured_from_the_previous_turns_last_call(self):
+        self.simple_turn("first", 0, "msg_1")
+        self.simple_turn("second", 3, "msg_2")
+        self.simple_turn("third", 30, "msg_3")
+        self.ingest()
+        self.assertEqual([r["cold_calls"] for r in self.records()], [0, 0, 1])
+
+    def test_the_previous_call_is_remembered_between_invocations(self):
+        self.simple_turn("first", 0, "msg_1")
+        self.ingest()
+        self.simple_turn("second", 30, "msg_2")
+        self.ingest()
+        self.assertEqual([r["cold_calls"] for r in self.records()], [0, 1])
+
+
+class SubagentTests(LedgerTestCase):
+    def subagent_file(self, name="agent-a1"):
+        directory = self.transcript.path.parent / SESSION / "subagents"
+        return Transcript(directory / f"{name}.jsonl", sidechain=True)
+
+    def test_subagent_usage_is_attributed_by_the_turns_time_window(self):
+        self.simple_turn("first", 0, "msg_1", output_tokens=1)
+        self.simple_turn("second", 10, "msg_2", output_tokens=2)
+        sub = self.subagent_file()
+        sub.assistant("sub_before", at(5), output_tokens=100)
+        sub.assistant("sub_in_first", at(0, 3), output_tokens=1000)
+        sub.assistant("sub_in_second", at(10, 2), output_tokens=2000, input_tokens=7)
+        sub.assistant("sub_after", at(20), output_tokens=5)
+        self.ingest()
+        first, second = self.records()
+        self.assertEqual(first["subagent_models"]["claude-opus-5-5"]["output"], 1000)
+        self.assertEqual(second["subagent_models"]["claude-opus-5-5"]["output"], 2000)
+        self.assertEqual(second["subagent_models"]["claude-opus-5-5"]["input"], 7)
+        self.assertEqual(second["subagent_api_calls"], 1)
+        self.assertEqual(first["models"]["claude-opus-5-5"]["output"], 1)
+
+    def test_subagent_cost_is_reported_and_included_in_usd_equiv(self):
+        self.simple_turn("go", 0, "msg_1", output_tokens=1000)
+        self.subagent_file().assistant("sub_1", at(0, 3), output_tokens=2000)
+        self.ingest()
+        (record,) = self.records()
+        self.assertAlmostEqual(record["subagent_usd"], 2000 * 20.00 / 1e6)
+        self.assertAlmostEqual(record["usd_equiv"], 3000 * 20.00 / 1e6)
+
+    def test_subagent_streaming_duplicates_are_deduped_across_records(self):
+        self.simple_turn("go", 0, "msg_1")
+        sub = self.subagent_file()
+        sub.assistant("sub_1", at(0, 2), output_tokens=10)
+        sub.assistant("sub_1", at(0, 3), output_tokens=30)
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["subagent_models"]["claude-opus-5-5"]["output"], 30)
+        self.assertEqual(record["subagent_api_calls"], 1)
+
+    def test_without_a_subagents_directory_the_subagent_fields_are_empty(self):
+        self.simple_turn("go", 0, "msg_1")
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual((record["subagent_usd"], record["subagent_models"]), (0, {}))
+
+
+class ClassificationTests(LedgerTestCase):
+    def test_a_sweep_prompt_is_monitoring_with_high_confidence(self):
+        self.simple_turn("RIV + GitHub sweep", 0, "msg_1")
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(
+            (record["goal"], record["goal_rule"], record["goal_conf"]),
+            ("monitoring", "P06_sweep_poll", "high"),
+        )
+
+    def test_tool_calls_become_a_signature_histogram_that_drives_the_goal(self):
+        self.transcript.user("tidy up", at(0))
+        self.transcript.assistant(
+            "msg_1",
+            at(0, 5),
+            stop_reason="tool_use",
+            output_tokens=900,
+            tools=[
+                ("t1", "Bash", {"command": "make test"}),
+                ("t2", "Edit", {"file_path": "/x/app.py"}),
+                ("t3", "Bash", {"command": "make check"}),
+            ],
+        )
+        self.transcript.assistant("msg_2", at(0, 9), output_tokens=10)
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["tool_sig"], {"test": 2, "edit_code": 1})
+        self.assertEqual(
+            (record["goal"], record["goal_rule"]), ("implementation", "T1_tools")
+        )
+
+    def test_repeated_streaming_records_count_each_tool_call_once(self):
+        self.transcript.user("go", at(0))
+        for second in (1, 2):
+            self.transcript.assistant(
+                "msg_1", at(0, second), tools=[("t1", "Bash", {"command": "make test"})]
+            )
+        self.ingest()
+        self.assertEqual(self.records()[0]["tool_sig"], {"test": 1})
+
+    def test_compaction_summaries_are_overhead(self):
+        self.transcript.user(
+            "This session is being continued", at(0), isCompactSummary=True
+        )
+        self.transcript.assistant("msg_1", at(0, 5))
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(
+            (record["goal"], record["prompt_kind"]), ("overhead", "compact_summary")
+        )
+
+    def test_prompt_kind_comes_from_the_records_origin(self):
+        self.transcript.user("hello", at(0), origin="task-notification")
+        self.transcript.assistant("msg_1", at(0, 5))
+        self.ingest()
+        self.assertEqual(self.records()[0]["prompt_kind"], "task-notification")
+
+    def test_prompt_id_is_carried_over(self):
+        self.transcript.user("hello", at(0), prompt_id="prompt-abc")
+        self.transcript.assistant("msg_1", at(0, 5))
+        self.ingest()
+        self.assertEqual(self.records()[0]["prompt_id"], "prompt-abc")
+
+    def test_assistant_records_with_no_user_prompt_form_a_promptless_turn(self):
+        self.transcript.assistant("msg_1", at(0, 5), output_tokens=3)
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(
+            (record["prompt_kind"], record["goal_rule"]), ("none", "P00_no_prompt")
+        )
+
+
+class IssueRefTests(unittest.TestCase):
+    def test_finds_linear_keys_and_hash_numbers_once_each(self):
+        prompt = "Work on RIV-123 and PLT-12 (see #45; also PR #45). Not UTF-8, not CVE-2024-1."
+        self.assertEqual(turn_ledger.issue_refs(prompt), ["RIV-123", "PLT-12", "#45"])
+
+    def test_ignores_html_entities_and_words_with_a_hash_inside(self):
+        self.assertEqual(turn_ledger.issue_refs("&#123; abc#9"), [])
+
+    def test_recorded_on_the_ledger_line(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        facts = turn_ledger.TurnFacts(
+            agent="claude",
+            session_id=SESSION,
+            cwd="/tmp",
+            prompt="please look at TOO-7",
+            prompt_id=None,
+            prompt_kind="human",
+            flags="",
+            ts_start=at(0),
+            ts_end=at(1),
+            models={},
+            api_calls=0,
+            cold_calls=0,
+            ctx_max=0,
+            tool_sig={},
+            tokens_by_signature={},
+        )
+        self.assertEqual(turn_ledger.build_record(facts)["issue_refs"], ["TOO-7"])
 
 
 class IdentityTests(unittest.TestCase):

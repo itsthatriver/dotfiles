@@ -20,12 +20,14 @@ full context and the process exits 0.
 
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 
 import goals
@@ -275,6 +277,7 @@ USAGE_FIELDS = (
 )
 CACHE_CREATION_FIELDS = ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
 OPEN_STOP_REASONS = (None, "tool_use")
+COLD_AFTER_SECONDS = 5 * 60
 
 
 def text_of(content) -> str:
@@ -347,6 +350,7 @@ class Message:
                     self.cache_creation[name], breakdown.get(name) or 0
                 )
         timestamp = record.get("timestamp") or self.last_ts
+        self.first_ts = min(self.first_ts, timestamp) if self.first_ts else timestamp
         self.last_ts = max(self.last_ts, timestamp)
         self.stop_reason = message.get("stop_reason")
         for block in message.get("content") or []:
@@ -421,6 +425,9 @@ class ClaudeTurn:
         messages = merge_messages(self.assistant_records)
         return bool(messages) and messages[-1].stop_reason not in OPEN_STOP_REASONS
 
+    def call_times(self) -> list:
+        return [message.first_ts for message in merge_messages(self.assistant_records)]
+
     def prompt_kind(self) -> str:
         if "isCompactSummary" in self.flags:
             return "compact_summary"
@@ -429,17 +436,16 @@ class ClaudeTurn:
         return self.origin or "unknown"
 
 
-def read_json_lines(path: Path, offset: int, wanted: tuple) -> tuple:
-    """Return (lines, end, corrupt) for the complete JSON lines from offset.
+def read_json_lines(path: Path, offset: int, wanted: tuple, log) -> tuple:
+    """Return (lines, end) for the complete JSON lines from offset.
 
     lines is a list of (start, end, record); end is the offset just past the
     last complete line. A final line without a newline counts only if it
     parses; otherwise it is still being written and is left for the next run.
-    corrupt lists (offset, error) for complete lines that are not JSON. Lines
-    that cannot hold a wanted marker are skipped without parsing.
+    A complete line that is not JSON is logged and skipped. Lines that cannot
+    hold a wanted marker are skipped without parsing.
     """
     lines: list = []
-    corrupt: list = []
     with path.open("rb") as handle:
         handle.seek(offset)
         position = offset
@@ -454,16 +460,16 @@ def read_json_lines(path: Path, offset: int, wanted: tuple) -> tuple:
             except ValueError as error:
                 if not complete:
                     break
-                corrupt.append((start, error))
+                log(f"skipped corrupt line at byte {start} of {path}: {error}")
             else:
                 lines.append((start, start + len(raw), record))
             position += len(raw)
-    return lines, position, corrupt
+    return lines, position
 
 
-def read_claude_turns(path: Path, offset: int) -> tuple:
-    """Return (turns, end offset of the last complete line, corrupt lines)."""
-    lines, end, corrupt = read_json_lines(path, offset, (b'"assistant"', b'"user"'))
+def read_claude_turns(path: Path, offset: int, log) -> tuple:
+    """Return (turns, end offset of the last complete line)."""
+    lines, end = read_json_lines(path, offset, (b'"assistant"', b'"user"'), log)
     turns: list = []
     for start, _, record in lines:
         timestamp = record.get("timestamp") or ""
@@ -485,25 +491,96 @@ def read_claude_turns(path: Path, offset: int) -> tuple:
             if not turns:
                 turns.append(ClaudeTurn(start, timestamp))
             turns[-1].assistant_records.append(record)
-    return turns, end, corrupt
+    return turns, end
 
 
-def summarize_claude_turn(turn: ClaudeTurn, session_id: str, cwd: str) -> TurnFacts:
-    messages = merge_messages(turn.assistant_records)
-    models: dict = {}
-    tool_sig: dict = {}
+@dataclass
+class SubagentUsage:
+    """Every subagent message of a session, ordered by time."""
+
+    times: list = field(default_factory=list)
+    messages: list = field(default_factory=list)
+
+    def between(self, start: datetime, end: datetime, exclude: set) -> list:
+        low = bisect.bisect_left(self.times, start)
+        high = bisect.bisect_right(self.times, end)
+        return [m for m in self.messages[low:high] if m.message_id not in exclude]
+
+
+def load_subagent_usage(directory: Path, not_before: datetime, log) -> SubagentUsage:
+    """Read <session>/subagents/*.jsonl, skipping files untouched since not_before."""
+    records: list = []
+    for path in sorted(directory.glob("*.jsonl")):
+        if path.stat().st_mtime < not_before.timestamp():
+            continue
+        lines, _ = read_json_lines(path, 0, (b'"assistant"',), log)
+        records += [
+            record for _, _, record in lines if record.get("type") == "assistant"
+        ]
+    dated = sorted(
+        (parse_ts(message.first_ts), message)
+        for message in merge_messages(records)
+        if message.first_ts
+    )
+    return SubagentUsage([when for when, _ in dated], [message for _, message in dated])
+
+
+def count_cold_calls(call_times: list, previous: str | None) -> int:
+    """Count calls that start more than COLD_AFTER_SECONDS after the one before."""
+    cold = 0
+    for call_time in call_times:
+        if (
+            previous
+            and (parse_ts(call_time) - parse_ts(previous)).total_seconds()
+            > COLD_AFTER_SECONDS
+        ):
+            cold += 1
+        previous = call_time
+    return cold
+
+
+def signature_profile(messages: list) -> tuple:
+    """Return (tool-call histogram, tokens spent per signature) for messages."""
+    histogram: dict = {}
     tokens_by_signature: dict = {}
     for message in messages:
-        tokens = message.tokens()
-        add_tokens(models, message.model, tokens)
         signatures = message.signatures()
         for signature in signatures:
-            tool_sig[signature] = tool_sig.get(signature, 0) + 1
-        total = sum(tokens.values())
+            histogram[signature] = histogram.get(signature, 0) + 1
+        total = sum(message.tokens().values())
         for signature in signatures or ["text"]:
             tokens_by_signature[signature] = tokens_by_signature.get(
                 signature, 0
             ) + total / len(signatures or [1])
+    return histogram, tokens_by_signature
+
+
+def summarize_claude_turn(
+    turn: ClaudeTurn,
+    session_id: str,
+    cwd: str,
+    previous_call: str | None,
+    subagents: SubagentUsage,
+) -> TurnFacts:
+    messages = merge_messages(turn.assistant_records)
+    models: dict = {}
+    for message in messages:
+        add_tokens(models, message.model, message.tokens())
+    ts_start = turn.ts_start or (messages[0].first_ts if messages else "")
+    ts_end = max([m.last_ts for m in messages], default=ts_start)
+    subagent_messages = (
+        subagents.between(
+            parse_ts(ts_start),
+            parse_ts(ts_end),
+            {message.message_id for message in messages},
+        )
+        if ts_start
+        else []
+    )
+    subagent_models: dict = {}
+    for message in subagent_messages:
+        add_tokens(subagent_models, message.model, message.tokens())
+    tool_sig, tokens_by_signature = signature_profile(messages + subagent_messages)
     return TurnFacts(
         agent="claude",
         session_id=session_id,
@@ -512,44 +589,50 @@ def summarize_claude_turn(turn: ClaudeTurn, session_id: str, cwd: str) -> TurnFa
         prompt_id=turn.prompt_id,
         prompt_kind=turn.prompt_kind(),
         flags=turn.flags,
-        ts_start=turn.ts_start or (messages[0].first_ts if messages else ""),
-        ts_end=max([m.last_ts for m in messages], default=turn.ts_start),
+        ts_start=ts_start,
+        ts_end=ts_end,
         models=models,
         api_calls=len(messages),
-        cold_calls=0,
+        cold_calls=count_cold_calls(turn.call_times(), previous_call),
         ctx_max=max([m.context_size() for m in messages], default=0),
         tool_sig=tool_sig,
         tokens_by_signature=tokens_by_signature,
+        subagent_models=subagent_models,
+        subagent_api_calls=len(subagent_messages),
     )
 
 
 def ingest_claude(home: Path, event: dict) -> int:
     """Close every finished turn since the cursor; return how many were written."""
+    event_name = event.get("hook_event_name", "?")
     session_id = event["session_id"]
     transcript = Path(event["transcript_path"])
-    flush = event.get("hook_event_name") == "SessionEnd"
+    log = partial(log_error, home, event_name, session_id)
     if not transcript.exists():
-        if event.get("hook_event_name") == "SessionStart":
+        if event_name == "SessionStart":
             return 0
         raise FileNotFoundError(f"transcript {transcript} does not exist")
     cursor = load_cursor(home, session_id, transcript)
-    turns, end, corrupt = read_claude_turns(transcript, cursor["offset"])
-    for offset, error in corrupt:
-        log_error(
-            home,
-            event.get("hook_event_name", "?"),
-            session_id,
-            f"skipped corrupt line at byte {offset}: {error}",
-        )
+    turns, end = read_claude_turns(transcript, cursor["offset"], log)
     open_turn = None
-    if turns and not flush and not turns[-1].is_finished():
+    if turns and event_name != "SessionEnd" and not turns[-1].is_finished():
         open_turn = turns.pop()
-    records = [
-        build_record(summarize_claude_turn(turn, session_id, event.get("cwd") or ""))
-        for turn in turns
-    ]
+    subagents = SubagentUsage()
+    if turns and turns[0].ts_start:
+        directory = transcript.parent / session_id / "subagents"
+        earliest = parse_ts(turns[0].ts_start) - timedelta(minutes=1)
+        subagents = load_subagent_usage(directory, earliest, log)
+    previous_call = cursor.get("last_call_ts")
+    records = []
+    for turn in turns:
+        facts = summarize_claude_turn(
+            turn, session_id, event.get("cwd") or "", previous_call, subagents
+        )
+        records.append(build_record(facts))
+        previous_call = (turn.call_times() or [previous_call])[-1]
     append_records(home, records)
     cursor["offset"] = open_turn.start_offset if open_turn else end
+    cursor["last_call_ts"] = previous_call
     save_cursor(home, session_id, cursor)
     return len(records)
 
