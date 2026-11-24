@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +16,7 @@ sys.path.insert(0, str(HERE))
 import goals  # noqa: E402
 import turn_ledger  # noqa: E402
 
+SCRIPT = HERE / "turn_ledger.py"
 SESSION = "11111111-2222-3333-4444-555555555555"
 CREW_CWD = str(Path.home() / "gt/dotfiles/crew/marsha")
 
@@ -576,6 +579,101 @@ class IssueRefTests(unittest.TestCase):
             tokens_by_signature={},
         )
         self.assertEqual(turn_ledger.build_record(facts)["issue_refs"], ["TOO-7"])
+
+
+class HookProcessTests(LedgerTestCase):
+    def start(self, *args, stdin_text, home=None):
+        env = {**os.environ, "TURN_LEDGER_HOME": str(home or self.home)}
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "hook", *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        process.stdin.write(stdin_text)
+        process.stdin.close()
+        return process
+
+    def run_hook(self, event, *args, home=None):
+        process = self.start(*args, stdin_text=json.dumps(event), home=home)
+        stdout, stderr = process.stdout.read(), process.stderr.read()
+        return process.wait(), stdout, stderr
+
+    def event(self, name="Stop", **overrides):
+        event = {
+            "hook_event_name": name,
+            "session_id": SESSION,
+            "transcript_path": str(self.transcript.path),
+            "cwd": CREW_CWD,
+        }
+        return {**event, **overrides}
+
+    def test_the_hook_reads_stdin_writes_the_ledger_and_prints_nothing(self):
+        self.simple_turn("go", 0, "msg_1", output_tokens=5)
+        code, stdout, stderr = self.run_hook(self.event())
+        self.assertEqual((code, stdout, stderr), (0, "", ""))
+        self.assertEqual(len(self.records()), 1)
+
+    def test_a_missing_transcript_is_logged_with_context_and_exits_zero(self):
+        event = self.event(transcript_path=str(self.root / "nope.jsonl"))
+        code, stdout, _ = self.run_hook(event)
+        self.assertEqual((code, stdout), (0, ""))
+        log = (self.home / "errors.log").read_text()
+        self.assertIn("event=Stop", log)
+        self.assertIn(f"session_id={SESSION}", log)
+        self.assertIn("Traceback", log)
+        self.assertIn("FileNotFoundError", log)
+
+    def test_a_session_start_before_the_transcript_exists_is_not_an_error(self):
+        event = self.event(
+            "SessionStart", transcript_path=str(self.root / "later.jsonl")
+        )
+        code, _, _ = self.run_hook(event)
+        self.assertEqual(code, 0)
+        self.assertFalse((self.home / "errors.log").exists())
+
+    def test_garbage_on_stdin_is_logged_and_exits_zero(self):
+        process = self.start(stdin_text="not json at all")
+        process.wait()
+        self.assertEqual(process.returncode, 0)
+        log = (self.home / "errors.log").read_text()
+        self.assertIn("event=?", log)
+        self.assertIn("Traceback", log)
+
+    def test_an_unsafe_session_id_is_logged_not_used_as_a_path(self):
+        code, _, _ = self.run_hook(self.event(session_id="../../etc/evil"))
+        self.assertEqual(code, 0)
+        self.assertIn("unsafe session_id", (self.home / "errors.log").read_text())
+        self.assertFalse((self.root / "etc").exists())
+
+    def test_bad_arguments_still_exit_zero(self):
+        process = self.start("--agent", "nonsense", stdin_text="{}")
+        _, stderr = process.communicate()
+        self.assertEqual(process.returncode, 0)
+        self.assertIn("nonsense", (self.home / "errors.log").read_text())
+
+    def test_an_unwritable_ledger_home_reports_on_stderr_and_exits_zero(self):
+        blocker = self.root / "blocker"
+        blocker.write_text("a file where the ledger directory should be")
+        self.simple_turn("go", 0, "msg_1")
+        code, _, stderr = self.run_hook(self.event(), home=blocker / "ledger")
+        self.assertEqual(code, 0)
+        self.assertIn("could not write errors.log", stderr)
+
+    def test_overlapping_invocations_cannot_double_append(self):
+        for index in range(3):
+            self.simple_turn(f"turn {index}", index * 10, f"msg_{index}")
+        stdin_text = json.dumps(self.event())
+        processes = [self.start(stdin_text=stdin_text) for _ in range(8)]
+        for process in processes:
+            process.wait()
+        self.assertEqual([p.returncode for p in processes], [0] * 8)
+        self.assertEqual(
+            [r["prompt_head"] for r in self.records()], ["turn 0", "turn 1", "turn 2"]
+        )
+        self.assertFalse((self.home / "errors.log").exists())
 
 
 class IdentityTests(unittest.TestCase):

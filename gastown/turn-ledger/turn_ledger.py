@@ -20,11 +20,16 @@ full context and the process exits 0.
 
 from __future__ import annotations
 
+import argparse
 import bisect
+import fcntl
 import json
 import os
 import re
+import sys
 import tempfile
+import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -158,10 +163,28 @@ def append_records(home: Path, records: list) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cursor_path(home: Path, session_id: str) -> Path:
+def checked_session_id(session_id: str) -> str:
+    """Session ids become file names, so refuse anything that is not a plain token."""
     if not SAFE_SESSION_ID.match(session_id):
         raise ValueError(f"unsafe session_id {session_id!r}")
-    return home / "cursors" / f"{session_id}.json"
+    return session_id
+
+
+def cursor_path(home: Path, session_id: str) -> Path:
+    return home / "cursors" / f"{checked_session_id(session_id)}.json"
+
+
+@contextmanager
+def session_lock(home: Path, session_id: str):
+    """Hold an exclusive per-session lock so overlapping hooks run one at a time."""
+    path = home / "locks" / f"{checked_session_id(session_id)}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def load_cursor(home: Path, session_id: str, transcript: Path) -> dict:
@@ -638,6 +661,57 @@ def ingest_claude(home: Path, event: dict) -> int:
 
 
 def ingest(home: Path, agent: str, event: dict) -> int:
-    if agent == "claude":
-        return ingest_claude(home, event)
+    """Write the ledger lines for every turn that has finished since the cursor."""
+    with session_lock(home, event["session_id"]):
+        if agent == "claude":
+            return ingest_claude(home, event)
     raise ValueError(f"unknown agent {agent!r}")
+
+
+# ---------------------------------------------------------------------------
+# Hook entry point
+# ---------------------------------------------------------------------------
+
+
+def report_failure(home: Path, argv: list, event) -> None:
+    """Log a hook failure with its context; fall back to stderr if that fails too."""
+    context = event if isinstance(event, dict) else {}
+    detail = f"argv={argv}\n{traceback.format_exc()}"
+    try:
+        log_error(
+            home,
+            str(context.get("hook_event_name", "?")),
+            str(context.get("session_id", "?")),
+            detail,
+        )
+    except OSError as error:
+        print(
+            f"turn-ledger: could not write errors.log ({error}):\n{detail}",
+            file=sys.stderr,
+        )
+
+
+def hook_command(argv: list) -> int:
+    """Run as a hook. Whatever happens, exit 0 so the agent is never held up."""
+    home = ledger_home()
+    event = None
+    try:
+        parser = argparse.ArgumentParser(prog="turn_ledger.py hook")
+        parser.add_argument("--agent", choices=("claude", "codex"), default="claude")
+        arguments = parser.parse_args(argv)
+        event = json.loads(sys.stdin.read())
+        ingest(home, arguments.agent, event)
+    except (Exception, SystemExit):
+        report_failure(home, argv, event)
+    return 0
+
+
+def main(argv: list) -> int:
+    if argv[:1] == ["hook"]:
+        return hook_command(argv[1:])
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
