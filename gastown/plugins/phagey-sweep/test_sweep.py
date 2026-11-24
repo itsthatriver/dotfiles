@@ -596,6 +596,32 @@ class Robustness(SweepTest):
             self.sweep.command_fail("boom")
         self.assertEqual(len(self.mails()), 1)
 
+    def failure_mails(self):
+        return [m for m in self.mails() if "failing" in m[m.index("-s") + 1]]
+
+    def test_a_failure_mail_that_fails_to_send_is_retried_on_the_next_failure(self):
+        # The outage being reported can take mail down too; one lost send must not
+        # silence the whole streak.
+        self.deliver_for_real()
+        self.sweep.command_fail("boom")
+        self.sweep.command_fail("boom")
+        (self.gt_home / "MAIL_FAILS").touch()
+        with self.assertRaises(self.sweep.SweepError):
+            self.sweep.command_fail("boom")
+        (self.gt_home / "MAIL_FAILS").unlink()
+        self.sweep.command_fail("boom")
+        self.assertEqual(len(self.failure_mails()), 2)
+        self.assertIn("4 runs in a row", self.subject())
+
+    def test_a_new_failure_streak_mails_again(self):
+        self.deliver_for_real()
+        for _ in range(3):
+            self.sweep.command_fail("boom")
+        self.sweep_once()
+        for _ in range(3):
+            self.sweep.command_fail("boom")
+        self.assertEqual(len(self.failure_mails()), 2)
+
     def test_a_good_run_resets_the_failure_count(self):
         self.sweep.command_fail("boom")
         self.sweep.command_fail("boom")

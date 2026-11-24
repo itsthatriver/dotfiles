@@ -411,8 +411,13 @@ def deliver(mail: dict, thread_root: str | None) -> str:
     return real_root or find_sent_message_id(mail)
 
 
-def escalate(reason: str) -> None:
-    title = f"riv-relay failed {ESCALATE_AFTER_FAILURES} runs in a row"
+def end_failure_streak(state: dict) -> None:
+    state["consecutive_failures"] = 0
+    state["escalated"] = False
+
+
+def escalate(reason: str, failures: int) -> None:
+    title = f"riv-relay failed {failures} runs in a row"
     run_gt(
         [
             "escalate",
@@ -519,7 +524,7 @@ def check_listing(lines: list[str]) -> str:
         BATCH_FILE.write_text(" ".join(batch))
         return "FETCH " + " ".join(batch)
     LISTING_FILE.unlink()
-    state["consecutive_failures"] = 0
+    end_failure_streak(state)
     save_state(state)
     return "NOTHING_CHANGED"
 
@@ -579,7 +584,7 @@ def command_relay() -> str:
             state["cursor"] = max(cursor, format_time(newest - CURSOR_OVERLAP))
         LISTING_FILE.unlink()
         BATCH_FILE.unlink(missing_ok=True)
-        state["consecutive_failures"] = 0
+        end_failure_streak(state)
         save_state(state)
         release_run()
     mode = "logged to dry-run.log" if is_dry_run() else "sent"
@@ -592,8 +597,13 @@ def command_fail(reason: str) -> str:
     state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
     save_state(state)
     failures = state["consecutive_failures"]
-    if failures == ESCALATE_AFTER_FAILURES:
-        escalate(reason)
+    # ">=" with a per-streak flag, not "==": the outage being escalated can take
+    # gt down too, and an equality check that loses its one escalation would
+    # leave the rest of the streak silent. Flagged only once escalate succeeds.
+    if failures >= ESCALATE_AFTER_FAILURES and not state.get("escalated", False):
+        escalate(reason, failures)
+        state["escalated"] = True
+        save_state(state)
         return f"riv-relay: failure {failures} in a row, escalated: {reason}"
     return f"riv-relay: failure {failures} in a row: {reason}"
 

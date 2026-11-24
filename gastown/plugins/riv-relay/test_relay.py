@@ -687,6 +687,29 @@ class DeliveryAndFailures(RelayTest):
             escalations[0][escalations[0].index("--fingerprint") + 1], "riv-relay"
         )
 
+    def escalations(self):
+        return [c["args"] for c in self.gt_calls() if c["args"][0] == "escalate"]
+
+    def test_an_escalation_that_fails_is_retried_on_the_next_failure(self):
+        # The outage being escalated can take gt down too; one lost escalation
+        # must not silence the rest of the streak.
+        for _ in range(4):
+            self.relay.command_fail("Linear read failed")
+        (self.gt_home / "FAIL").touch()
+        with self.assertRaises(self.relay.RelayError):
+            self.relay.command_fail("Linear read failed")
+        (self.gt_home / "FAIL").unlink()
+        self.relay.command_fail("Linear read failed")
+        self.assertEqual(len(self.escalations()), 2)
+
+    def test_a_new_failure_streak_escalates_again(self):
+        for _ in range(5):
+            self.relay.command_fail("Linear read failed")
+        self.run_once(issue())
+        for _ in range(5):
+            self.relay.command_fail("Linear read failed")
+        self.assertEqual(len(self.escalations()), 2)
+
     def test_a_successful_run_resets_the_failure_streak(self):
         for _ in range(4):
             self.relay.command_fail("Linear read failed")
