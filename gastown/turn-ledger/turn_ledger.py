@@ -665,7 +665,161 @@ def ingest(home: Path, agent: str, event: dict) -> int:
     with session_lock(home, event["session_id"]):
         if agent == "claude":
             return ingest_claude(home, event)
+        if agent == "codex":
+            return ingest_codex(home, event)
     raise ValueError(f"unknown agent {agent!r}")
+
+
+# ---------------------------------------------------------------------------
+# Codex rollouts (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl)
+#
+# A turn runs from an event_msg task_started to its task_complete (or
+# turn_aborted). Each model call ends with an event_msg token_count whose
+# last_token_usage holds that call's tokens. Codex sometimes emits the same
+# token_count twice, so a count whose running total matches the previous one
+# is skipped.
+# ---------------------------------------------------------------------------
+
+CODEX_END_EVENTS = ("task_complete", "turn_aborted")
+CODEX_SHELL_TOOLS = ("exec", "shell", "exec_command")
+
+
+@dataclass
+class CodexTurn:
+    start_offset: int
+    ts_start: str
+    ts_end: str
+    model: str = "?"
+    cwd: str = ""
+    prompt: str = ""
+    complete: bool = False
+    # In file order: ("tool", label, argument) or ("tokens", token_count info).
+    events: list = field(default_factory=list)
+
+
+def read_codex_turns(path: Path, offset: int, log) -> tuple:
+    """Return (turns, end offset of the last complete line)."""
+    markers = (b'"event_msg"', b'"response_item"', b'"turn_context"')
+    lines, end = read_json_lines(path, offset, markers, log)
+    turns: list = []
+    for start, _, record in lines:
+        payload = record.get("payload") or {}
+        kind = payload.get("type")
+        timestamp = record.get("timestamp") or ""
+        if record["type"] == "event_msg" and kind == "task_started":
+            turns.append(CodexTurn(start, timestamp, timestamp))
+        if not turns:
+            continue
+        turn = turns[-1]
+        if not turn.complete:
+            turn.ts_end = timestamp or turn.ts_end
+        if record["type"] == "turn_context":
+            turn.model = payload.get("model") or turn.model
+            turn.cwd = payload.get("cwd") or turn.cwd
+        elif record["type"] == "event_msg" and kind in CODEX_END_EVENTS:
+            turn.complete = True
+        elif record["type"] == "event_msg" and kind == "token_count":
+            if payload.get("info"):
+                turn.events.append(("tokens", payload["info"]))
+        elif record["type"] == "response_item":
+            if kind == "message" and payload.get("role") == "user" and not turn.prompt:
+                turn.prompt = "\n".join(
+                    block.get("text", "") for block in payload.get("content") or []
+                )
+            elif kind in ("function_call", "custom_tool_call"):
+                name = payload.get("name", "?")
+                label = "exec" if name in CODEX_SHELL_TOOLS else name
+                argument = str(payload.get("arguments") or payload.get("input") or "")
+                turn.events.append(("tool", label, argument[:200]))
+    return turns, end
+
+
+def summarize_codex_turn(
+    turn: CodexTurn, session_id: str, cwd: str, previous_total: dict | None
+) -> tuple:
+    """Return (TurnFacts, running token total after this turn)."""
+    models: dict = {}
+    tool_sig: dict = {}
+    tokens_by_signature: dict = {}
+    pending: list = []
+    api_calls, ctx_max = 0, 0
+    for event in turn.events:
+        if event[0] == "tool":
+            signature = goals.signature(event[1], event[2])
+            tool_sig[signature] = tool_sig.get(signature, 0) + 1
+            pending.append(signature)
+            continue
+        info = event[1]
+        if info.get("total_token_usage") == previous_total:
+            continue
+        previous_total = info.get("total_token_usage")
+        last = info.get("last_token_usage") or {}
+        cached = last.get("cached_input_tokens") or 0
+        add_tokens(
+            models,
+            turn.model,
+            {
+                "input": max((last.get("input_tokens") or 0) - cached, 0),
+                "output": last.get("output_tokens") or 0,
+                "cache_write_5m": last.get("cache_write_input_tokens") or 0,
+                "cache_write_1h": 0,
+                "cache_read": cached,
+            },
+        )
+        api_calls += 1
+        ctx_max = max(ctx_max, last.get("input_tokens") or 0)
+        for signature in pending or ["text"]:
+            tokens_by_signature[signature] = tokens_by_signature.get(signature, 0) + (
+                last.get("total_tokens") or 0
+            ) / len(pending or [1])
+        pending = []
+    facts = TurnFacts(
+        agent="codex",
+        session_id=session_id,
+        cwd=cwd or turn.cwd,
+        prompt=turn.prompt,
+        prompt_id=None,
+        prompt_kind="unknown" if turn.prompt else "none",
+        flags="",
+        ts_start=turn.ts_start,
+        ts_end=turn.ts_end,
+        models=models,
+        api_calls=api_calls,
+        cold_calls=0,
+        ctx_max=ctx_max,
+        tool_sig=tool_sig,
+        tokens_by_signature=tokens_by_signature,
+    )
+    return facts, previous_total
+
+
+def ingest_codex(home: Path, event: dict) -> int:
+    """Close every finished Codex turn since the cursor; return how many were written."""
+    event_name = event.get("hook_event_name", "?")
+    session_id = event["session_id"]
+    rollout = Path(event["transcript_path"])
+    log = partial(log_error, home, event_name, session_id)
+    if not rollout.exists():
+        if event_name == "SessionStart":
+            return 0
+        raise FileNotFoundError(f"rollout {rollout} does not exist")
+    cursor = load_cursor(home, session_id, rollout)
+    turns, end = read_codex_turns(rollout, cursor["offset"], log)
+    open_turn = None
+    if turns and not turns[-1].complete:
+        open_turn = turns.pop()
+    previous_total = cursor.get("last_total_usage")
+    records = []
+    for turn in turns:
+        facts, previous_total = summarize_codex_turn(
+            turn, session_id, event.get("cwd") or "", previous_total
+        )
+        records.append(build_record(facts))
+    append_records(home, records)
+    cursor["offset"] = open_turn.start_offset if open_turn else end
+    cursor["last_total_usage"] = previous_total
+    save_cursor(home, session_id, cursor)
+    return len(records)
 
 
 # ---------------------------------------------------------------------------

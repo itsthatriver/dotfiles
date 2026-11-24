@@ -676,6 +676,223 @@ class HookProcessTests(LedgerTestCase):
         self.assertFalse((self.home / "errors.log").exists())
 
 
+CODEX_SESSION = "01a20f31-20ed-71a2-aaf1-06008f21f8ad"
+POLECAT_CWD = str(Path.home() / "gt/monorepo/polecats/synth/monorepo")
+
+
+class Rollout:
+    """Builds a Codex rollout fixture shaped like ~/.codex/sessions files."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch()
+        self.ordinal = 0
+
+    def write(self, record_type, payload, timestamp):
+        record = {
+            "timestamp": timestamp,
+            "ordinal": self.ordinal,
+            "type": record_type,
+            "payload": payload,
+        }
+        self.ordinal += 1
+        with self.path.open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+
+    def session_meta(self, timestamp):
+        meta = {"id": CODEX_SESSION, "cwd": POLECAT_CWD, "originator": "codex-tui"}
+        self.write("session_meta", meta, timestamp)
+
+    def task_started(self, timestamp):
+        self.write(
+            "event_msg", {"type": "task_started", "turn_id": "turn-1"}, timestamp
+        )
+
+    def turn_context(self, timestamp, model="gpt-6-astra"):
+        context = {"turn_id": "turn-1", "cwd": POLECAT_CWD, "model": model}
+        self.write("turn_context", context, timestamp)
+
+    def user_message(self, text, timestamp):
+        message = {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        }
+        self.write("response_item", message, timestamp)
+
+    def tool_call(self, name, arguments, timestamp, kind="function_call"):
+        call = {"type": kind, "name": name, "arguments": arguments}
+        self.write("response_item", call, timestamp)
+
+    def token_count(self, timestamp, total, last=None):
+        info = {"total_token_usage": total, "last_token_usage": last or total}
+        self.write("event_msg", {"type": "token_count", "info": info}, timestamp)
+
+    def empty_token_count(self, timestamp):
+        self.write("event_msg", {"type": "token_count", "info": None}, timestamp)
+
+    def task_complete(self, timestamp, kind="task_complete"):
+        self.write("event_msg", {"type": kind, "turn_id": "turn-1"}, timestamp)
+
+
+def codex_usage(input_tokens, cached, output):
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": 0,
+        "output_tokens": output,
+        "reasoning_output_tokens": 0,
+        "total_tokens": input_tokens + output,
+    }
+
+
+class CodexTests(unittest.TestCase):
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+        self.home = self.root / "ledger"
+        self.rollout = Rollout(
+            self.root / "sessions" / f"rollout-{CODEX_SESSION}.jsonl"
+        )
+
+    def hook_input(self, event="Stop"):
+        return {
+            "hook_event_name": event,
+            "session_id": CODEX_SESSION,
+            "transcript_path": str(self.rollout.path),
+            "cwd": POLECAT_CWD,
+        }
+
+    def ingest(self, event="Stop"):
+        return turn_ledger.ingest(self.home, "codex", self.hook_input(event))
+
+    def records(self):
+        lines = []
+        for ledger_file in sorted(self.home.glob("????-??-??.jsonl")):
+            lines += ledger_file.read_text().splitlines()
+        return [json.loads(line) for line in lines]
+
+    def finished_turn(self, start_minute, prompt="From gigi: run gt prime --hook"):
+        self.rollout.task_started(at(start_minute))
+        self.rollout.user_message(prompt, at(start_minute, 1))
+        self.rollout.turn_context(at(start_minute, 2))
+        self.rollout.tool_call(
+            "exec_command", '{"cmd": "make test"}', at(start_minute, 3)
+        )
+        first = codex_usage(1000, 600, 50)
+        self.rollout.token_count(at(start_minute, 4), first)
+        self.rollout.token_count(at(start_minute, 4), first)  # Codex repeats events
+        self.rollout.empty_token_count(at(start_minute, 5))
+        self.rollout.token_count(
+            at(start_minute, 6),
+            codex_usage(2200, 1600, 130),
+            last=codex_usage(1200, 1000, 80),
+        )
+        self.rollout.task_complete(at(start_minute, 9))
+
+    def test_token_counts_become_a_record_with_codex_fields(self):
+        self.finished_turn(0)
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["agent"], "codex")
+        self.assertEqual(record["session_id"], CODEX_SESSION)
+        self.assertEqual(
+            (record["role"], record["rig"], record["name"]),
+            ("polecat", "monorepo", "synth"),
+        )
+        self.assertEqual(record["ts_start"], at(0))
+        self.assertEqual(record["ts_end"], at(0, 9))
+        self.assertEqual(
+            record["models"],
+            {
+                "gpt-6-astra": {
+                    "input": 400 + 200,
+                    "output": 130,
+                    "cache_write_5m": 0,
+                    "cache_write_1h": 0,
+                    "cache_read": 1600,
+                }
+            },
+        )
+        self.assertEqual(record["api_calls"], 2)
+        self.assertEqual(record["ctx_max"], 1200)
+        self.assertEqual(record["tool_sig"], {"test": 1})
+
+    def test_models_without_a_price_cost_nothing_and_are_flagged(self):
+        self.finished_turn(0)
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["usd_equiv"], 0)
+        self.assertEqual(record["unpriced_models"], ["gpt-6-astra"])
+
+    def test_prompt_is_the_first_user_message_and_is_classified(self):
+        self.finished_turn(0, prompt="# AGENTS.md instructions for /gt/monorepo")
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["goal_rule"], "P14_work_assign+tools")
+
+    def test_a_turn_without_task_complete_stays_open(self):
+        self.rollout.task_started(at(0))
+        self.rollout.user_message("go", at(0, 1))
+        self.rollout.token_count(at(0, 4), codex_usage(100, 0, 10))
+        self.ingest()
+        self.assertEqual(self.records(), [])
+        self.rollout.token_count(
+            at(0, 6), codex_usage(200, 0, 20), last=codex_usage(100, 0, 10)
+        )
+        self.rollout.task_complete(at(0, 9))
+        self.ingest()
+        (record,) = self.records()
+        self.assertEqual(record["api_calls"], 2)
+        self.assertEqual(record["models"]["?"]["output"], 20)
+
+    def test_an_aborted_turn_is_closed_too(self):
+        self.rollout.task_started(at(0))
+        self.rollout.user_message("go", at(0, 1))
+        self.rollout.token_count(at(0, 4), codex_usage(100, 0, 10))
+        self.rollout.task_complete(at(0, 9), kind="turn_aborted")
+        self.ingest()
+        self.assertEqual(len(self.records()), 1)
+
+    def test_two_turns_and_a_rerun_do_not_duplicate_or_double_count(self):
+        self.finished_turn(0)
+        self.finished_turn(20)
+        self.ingest()
+        self.ingest()
+        first, second = self.records()
+        self.assertEqual(first["models"], second["models"])
+
+    def test_a_repeat_of_the_previous_turns_last_count_is_not_recounted(self):
+        self.finished_turn(0)
+        self.ingest()
+        self.rollout.task_started(at(20))
+        self.rollout.user_message("next", at(20, 1))
+        self.rollout.token_count(
+            at(20, 2), codex_usage(2200, 1600, 130), last=codex_usage(1200, 1000, 80)
+        )
+        self.rollout.token_count(
+            at(20, 5), codex_usage(3200, 2000, 160), last=codex_usage(1000, 400, 30)
+        )
+        self.rollout.task_complete(at(20, 9))
+        self.ingest()
+        self.assertEqual(self.records()[1]["api_calls"], 1)
+
+    def test_the_hook_cli_accepts_the_codex_agent_flag(self):
+        self.finished_turn(0)
+        env = {**os.environ, "TURN_LEDGER_HOME": str(self.home)}
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "hook", "--agent", "codex"],
+            input=json.dumps(self.hook_input()),
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual(self.records()[0]["agent"], "codex")
+
+
 class IdentityTests(unittest.TestCase):
     def identify(self, relative):
         return turn_ledger.identify(str(Path.home() / "gt" / relative))
