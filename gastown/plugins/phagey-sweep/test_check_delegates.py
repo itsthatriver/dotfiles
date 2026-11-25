@@ -33,6 +33,7 @@ FAKE_GT = textwrap.dedent(
         if grep -Fxq "$3" "$home/parked"; then echo "  Status: PARKED (local)"; else echo "  Status: OPERATIONAL"; fi
         seq 1 20000 ;;
       peek)
+        if grep -Fxq "$2" "$home/peek_failing"; then echo "can't find session for $2" >&2; exit 1; fi
         seq 1 20000
         if grep -Fxq "$2" "$home/prompting"; then printf '  ❯ 1. Yes\\n  2. No\\n'; fi ;;
     esac
@@ -59,11 +60,15 @@ class CheckDelegatesTest(unittest.TestCase):
         }
         self.set_parked()
         self.set_prompting()
+        self.set_peek_failing()
 
     def set_live(self, *rigs: str) -> None:
         lines = []
         for rig in rigs:
-            lines += [f"── {rig} ──", f"  {DELEGATE_RIGS[rig]}"]
+            lines += [f"── {rig} ──", f"  👷 {DELEGATE_RIGS[rig]}"]
+        self.write_agents(lines)
+
+    def write_agents(self, lines: list[str]) -> None:
         (self.home / "agents").write_text("\n".join(lines) + "\n")
 
     def set_parked(self, *rigs: str) -> None:
@@ -71,6 +76,9 @@ class CheckDelegatesTest(unittest.TestCase):
 
     def set_prompting(self, *agents: str) -> None:
         (self.home / "prompting").write_text("".join(f"{agent}\n" for agent in agents))
+
+    def set_peek_failing(self, *agents: str) -> None:
+        (self.home / "peek_failing").write_text("".join(f"{agent}\n" for agent in agents))
 
     def check(self) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -113,6 +121,21 @@ class CheckDelegatesTest(unittest.TestCase):
             (result.returncode, result.stdout),
             (1, "PROMPT monorepo/crew/gigi\nPROMPT gs/crew/drummer\n"),
         )
+
+    def test_agent_whose_name_is_a_prefix_of_a_live_one_is_down(self) -> None:
+        self.write_agents(["── monorepo ──", "  👷 crew/gigi2", "── gs ──", "  👷 crew/drummer",
+                           "── ml ──", "  👷 crew/lovelace", "── dotfiles ──", "  👷 crew/marsha",
+                           "── data ──", "  👷 crew/hopper"])
+        result = self.check()
+        self.assertEqual((result.returncode, result.stdout), (1, "DOWN monorepo/crew/gigi\n"))
+
+    def test_peek_failure_is_an_error_not_healthy(self) -> None:
+        self.set_live(*DELEGATE_RIGS)
+        self.set_peek_failing("gs/crew/drummer")
+        result = self.check()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("gt peek gs/crew/drummer failed: can't find session", result.stderr)
+        self.assertIn("gs/crew/drummer", self.state.read_text().splitlines())
 
     def test_nobody_live_records_empty_state(self) -> None:
         self.set_live()

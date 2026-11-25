@@ -3,7 +3,8 @@
 # Prints one line per problem and nothing when everyone is healthy:
 #   DOWN <agent>     no live session
 #   PROMPT <agent>   session is waiting at an interactive prompt (permission or confirmation)
-# Exit status is 1 if any problem was found, 2 if the check itself failed.
+# Exit status is 1 if any problem was found, 2 if the check itself failed (gt agents or
+# gt peek erroring), with the reason on stderr. A failed check must never read as healthy.
 #
 # A parked or docked rig was shut down on purpose, so an agent that stays down there is
 # expected. Crew sessions can outlive the parking, though, so an agent on such a rig that
@@ -25,14 +26,16 @@ if ! live=$(timeout 60 gt agents 2>&1); then
 fi
 previously_live=$(cat "$LIVE_STATE" 2>/dev/null)
 now_live=()
+check_failures=()
 problems=0
 
 is_live() {
   local rig=$1 name=$2
-  # `gt agents` groups sessions under "── <rig> ──" headings.
+  # `gt agents` groups sessions under "── <rig> ──" headings, one "  👷 crew/<name>" line
+  # per session. Matching the whole last field keeps crew/gigi2 from passing for crew/gigi.
   awk -v rig="$rig" -v name="$name" '
       /^── / { in_rig = ($2 == rig) }
-      in_rig && index($0, name) { found = 1 }
+      in_rig && $NF == name { found = 1 }
       END { exit !found }' <<<"$live"
 }
 
@@ -55,7 +58,10 @@ for agent in "${DELEGATES[@]}"; do
     continue
   fi
   now_live+=("$agent")
-  pane=$(timeout 60 gt peek "$agent" -n 25 2>/dev/null)
+  if ! pane=$(timeout 60 gt peek "$agent" -n 25 2>&1); then
+    check_failures+=("gt peek $agent failed: ${pane:0:150}")
+    continue
+  fi
   if tail -15 <<<"$pane" | grep -Eq "$PROMPT_PATTERN"; then
     echo "PROMPT $agent"
     problems=1
@@ -64,4 +70,8 @@ done
 
 # The ${a[@]+...} form keeps macOS bash 3.2 from treating an empty array as unbound.
 printf '%s\n' ${now_live[@]+"${now_live[@]}"} >"$LIVE_STATE"
+if ((${#check_failures[@]} > 0)); then
+  printf '%s\n' "${check_failures[@]}" >&2
+  exit 2
+fi
 exit "$problems"
