@@ -135,7 +135,21 @@ class CheckDelegatesTest(unittest.TestCase):
         result = self.check()
         self.assertEqual(result.returncode, 2)
         self.assertIn("gt peek gs/crew/drummer failed: can't find session", result.stderr)
-        self.assertIn("gs/crew/drummer", self.state.read_text().splitlines())
+        # A failed check leaves the state alone (see the parked-drop test below).
+        self.assertFalse(self.state.exists())
+
+    def test_parked_drop_is_still_reported_after_a_failed_check(self) -> None:
+        # sweep.py reports only the check failure on exit 2 and drops the DOWN line, so
+        # a failed run must not consume the one-time drop notice by rewriting the state.
+        self.set_parked("dotfiles")
+        self.set_live(*DELEGATE_RIGS)
+        self.assertEqual(self.check().stdout, "")
+        self.set_live("monorepo", "gs", "ml", "data")
+        self.set_peek_failing("gs/crew/drummer")
+        self.assertEqual(self.check().returncode, 2)
+        self.set_peek_failing()
+        retried = self.check()
+        self.assertEqual((retried.returncode, retried.stdout), (1, "DOWN dotfiles/crew/marsha\n"))
 
     def test_nobody_live_records_empty_state(self) -> None:
         self.set_live()
