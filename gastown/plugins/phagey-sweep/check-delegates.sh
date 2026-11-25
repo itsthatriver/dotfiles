@@ -68,10 +68,12 @@ for agent in "${DELEGATES[@]}"; do
   fi
 done
 
-# The ${a[@]+...} form keeps macOS bash 3.2 from treating an empty array as unbound.
-printf '%s\n' ${now_live[@]+"${now_live[@]}"} >"$LIVE_STATE"
 if ((${#check_failures[@]} > 0)); then
   printf '%s\n' "${check_failures[@]}" >&2
+  # Keep the previous state: sweep.py reports only the failure on exit 2, so rewriting
+  # it here would consume a parked agent's one-time DOWN before anyone saw it.
   exit 2
 fi
+# The ${a[@]+...} form keeps macOS bash 3.2 from treating an empty array as unbound.
+printf '%s\n' ${now_live[@]+"${now_live[@]}"} >"$LIVE_STATE"
 exit "$problems"
