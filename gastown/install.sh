@@ -39,3 +39,9 @@ link_plugin() {
 link_plugin riv-relay plugin.md relay.py
 link_plugin review-inbox plugin.md review_inbox.py
 link_plugin slack-triage plugin.md slack_triage.py
+
+# phagey-sweep, plugin.md and the good-morning skill all call the delegate
+# check at this fixed path.
+mkdir -p "${HOME}/.local/share/phagey-tools"
+link_item "${SCRIPT_DIR}/plugins/phagey-sweep/check-delegates.sh" \
+  "${HOME}/.local/share/phagey-tools/check-delegates.sh" "phagey-tools/check-delegates.sh"
